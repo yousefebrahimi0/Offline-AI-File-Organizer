@@ -139,9 +139,6 @@ Respond with ONLY the new filename, nothing else."""
 
 Choose from: Work, Personal, Finance, Medical, Education, Legal, Photos, Projects, Archive, Miscellaneous
 
-If the document is in Persian/Farsi, you may use Persian category names:
-کار (Work), شخصی (Personal), مالی (Finance), پزشکی (Medical), آموزشی (Education), حقوقی (Legal), تصاویر (Photos), پروژه‌ها (Projects), آرشیو (Archive), متفرقه (Miscellaneous)
-
 Content preview:
 {content[:800]}
 
@@ -319,7 +316,6 @@ def main():
 ╔══════════════════════════════════════════════════════════╗
 ║     Offline AI-POWERED FILE ORGANIZER AND RENAMER        ║
 ║     Uses Local LM Studio (Mistral-7B)                    ║
-║     Supports English/Persian content in AI processing    ║
 ╚══════════════════════════════════════════════════════════╝
     """)
 
@@ -362,3 +358,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
