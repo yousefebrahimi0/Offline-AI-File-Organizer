@@ -1,6 +1,8 @@
 # 🤖 Offline AI File Organizer
 > *I kept telling myself I'd organize my files "later." days passed. Thousands of cryptic filenames piled up. I checked and reviewed some apps on windows to rename and organize my files but non of them were good enough, So one day I realized: why force discipline when I can automate intelligence specially using local LLM? So I built this.*
 
+![Offline AI File Organizer Banner](banner.png)
+
 **Transform your messy file system into an organized masterpiece using local AI.**
 
 Automatically rename and organize your documents using AI that runs entirely on your machine. No cloud uploads, no privacy concerns, just intelligent file management powered by local LLMs.
@@ -17,9 +19,10 @@ Automatically rename and organize your documents using AI that runs entirely on 
 
 ### 🎯 Intelligent Renaming
 - **AI-Powered Analysis**: Reads actual file content to generate meaningful names
-- **Smart Naming**: Transforms `8a095-4d0f6a90008b.pdf` → `Blood Test Results (2024-03).pdf`
+- **Smart Naming**: Transforms `8a095-4d0f6a90008b.pdf` → `My personal test on NY project (2025-03).pdf`
 - **Date Integration**: Automatically adds modification date (YYYY-MM) to filenames
 - **Duplicate Handling**: Safely manages duplicate names with incremental suffixes
+- **Supports Two languages**: You can choose English or Persian as a language for analysis
 
 ### 📁 Smart Organization
 - **Content-Based Categorization**: AI analyzes documents and sorts them into relevant folders
@@ -62,7 +65,7 @@ Automatically rename and organize your documents using AI that runs entirely on 
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/ai-file-organizer.git
+   git clone https://github.com/yousefebrahimi0/ai-file-organizer.git
    cd ai-file-organizer
    ```
 
@@ -70,12 +73,15 @@ Automatically rename and organize your documents using AI that runs entirely on 
    ```bash
    pip install -r requirements.txt
    ```
+![Screenshot One](screenshot1.png)
 
 3. **Start LM Studio**
    - Open LM Studio
    - Load your preferred model (Mistral-7B-Instruct recommended)
    - Go to **Local Server** tab
    - Click **Start Server** (default port: 1234)
+
+![Screenshot Two](screenshot2.png)
 
 ### Usage
 
@@ -255,7 +261,7 @@ Contributions are welcome! Here's how you can help:
 - [ ] Custom category templates
 - [ ] GUI interface
 - [ ] Undo functionality
-- [ ] Multi-language support
+- [ ] Other languages to support
 - [ ] Integration with other local LLM frameworks
 
 ---
