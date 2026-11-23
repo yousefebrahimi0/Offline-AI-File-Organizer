@@ -574,6 +574,11 @@ class FileOrganizer:
             )
             if new_path.parent.resolve(strict=False) != allowed.resolve(strict=False):
                 raise ValueError("Plan destination violates approved folder depth.")
+        else:
+            if action.get("subcategory"):
+                raise ValueError("Subcategory is not allowed without a category.")
+            if new_path.parent.resolve(strict=False) != old_path.parent.resolve(strict=False):
+                raise ValueError("Rename-only plans cannot change the parent folder.")
         return old_path, new_path
 
     def _preflight_plan(self) -> List[Tuple[Dict[str, Any], Path, Path]]:

@@ -381,3 +381,53 @@ def test_no_ai_miscellaneous_fallback_for_uncertain_results(tmp_path):
     assert organizer.build_plan(rename=True,organize=True)==[]
     assert source.exists()
     assert len(organizer.review_queue.items())==1
+
+
+
+def test_category_only_plan_does_not_allow_unapproved_nesting(tmp_path):
+    f = tmp_path / "note.txt"
+    f.write_text("Plan", encoding="utf-8")
+    organizer = make_organizer(tmp_path)
+    action = {
+        "old_path": str(f),
+        "new_path": str(tmp_path / "Organized" / "Projects" / "2026" / "note.txt"),
+        "category": "Projects", "subcategory": "",
+        "source_fingerprint": organizer._file_fingerprint(f),
+    }
+    organizer.planned_actions = [action]
+    with pytest.raises(ValueError, match="approved folder depth"):
+        organizer.apply_plan()
+    assert f.exists()
+
+
+def test_rename_only_plan_does_not_move_between_folders(tmp_path):
+    f = tmp_path / "note.txt"
+    f.write_text("Plan", encoding="utf-8")
+    organizer = make_organizer(tmp_path)
+    action = {
+        "old_path": str(f),
+        "new_path": str(tmp_path / "private" / "renamed.txt"),
+        "category": "", "subcategory": "",
+        "source_fingerprint": organizer._file_fingerprint(f),
+    }
+    organizer.planned_actions = [action]
+    with pytest.raises(ValueError, match="Rename-only"):
+        organizer.apply_plan()
+    assert f.exists()
+
+
+def test_duplicate_index_tracks_organizer_move(tmp_path):
+    first = tmp_path / "first.txt"
+    first.write_text("Same material", encoding="utf-8")
+    organizer = make_organizer(
+        tmp_path, '{"filename":"Text","category":"Projects","subcategory":""}'
+    )
+    plan = organizer.build_plan(rename=True, organize=True)
+    organizer.apply_plan()
+    assert Path(plan[0]["new_path"]).exists()
+
+    later = tmp_path / "later.txt"
+    later.write_text("Same material", encoding="utf-8")
+    assert organizer.build_plan(rename=True, organize=True) == []
+    assert len(organizer.review_queue.items()) >= 1
+    assert later.exists()
