@@ -8,6 +8,8 @@ from __future__ import annotations
 import base64
 import io
 import mimetypes
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -85,3 +87,37 @@ def optimized_image(path: Path, max_dimension: int = 1024, quality: int = 76) ->
     except Exception:
         mime = mimetypes.guess_type(str(path))[0] or "image/jpeg"
         return mime, base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+
+def document_hints(content: str) -> dict:
+    """Conservative local date/vendor/invoice hints; not verified invoice fields."""
+    hints = {}
+    patterns = [
+        (r"\b(20\d{2}-\d{2}-\d{2})\b", "%Y-%m-%d"),
+        (r"\b([0-3]?\d/[01]?\d/20\d{2})\b", "%d/%m/%Y"),
+        (r"\b([0-3]?\d\.[01]?\d\.20\d{2})\b", "%d.%m.%Y"),
+    ]
+    for pattern, date_format in patterns:
+        match = re.search(pattern, content)
+        if match:
+            try:
+                hints["document_date"] = datetime.strptime(match.group(1), date_format).strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                continue
+
+    vendor = re.search(
+        r"(?:supplier|vendor|merchant|fornecedor)\s*:\s*([^\n]{3,60})",
+        content[:1200], re.IGNORECASE,
+    )
+    if vendor:
+        hints["vendor"] = vendor.group(1).strip().split("|")[0][:50]
+
+    number = re.search(
+        r"(?:invoice|fatura)\s*(?:number|no\.?|n[ºo]?)\s*[:#-]?\s*([A-Za-z0-9-]{2,30})",
+        content[:1200], re.IGNORECASE,
+    )
+    if number:
+        hints["invoice_number"] = number.group(1)
+    return hints

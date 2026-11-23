@@ -6,6 +6,7 @@ No third-party AI dependency. These helpers never move or delete user files.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -139,7 +140,7 @@ class Workspace:
         self.lock = threading.RLock()
 
     def read(self, name: str, default):
-        if name not in {"rules.json", "review_queue.json"}:
+        if name not in {"rules.json", "review_queue.json", "analysis_cache.json"}:
             raise ValueError("Unknown workspace file.")
         path = self.folder / name
         if not path.exists():
@@ -153,7 +154,7 @@ class Workspace:
         return data if isinstance(data, type(default)) else default
 
     def write(self, name: str, data) -> None:
-        if name not in {"rules.json", "review_queue.json"}:
+        if name not in {"rules.json", "review_queue.json", "analysis_cache.json"}:
             raise ValueError("Unknown workspace file.")
         atomic_json(self.folder / name, data)
 
@@ -263,3 +264,31 @@ class DuplicateIndex:
                 self.find_or_register(path, fingerprint(path))
             except (OSError, ValueError):
                 continue
+
+
+
+class AnalysisCache:
+    """Bounded local cache keyed by file content, naming context and model settings."""
+
+    def __init__(self, workspace: Workspace, limit: int = 500):
+        self.workspace = workspace
+        self.limit = max(20, min(5000, int(limit)))
+
+    @staticmethod
+    def key(parts: list) -> str:
+        raw = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def get(self, key: str) -> Optional[dict]:
+        with self.workspace.lock:
+            record = self.workspace.read("analysis_cache.json", {}).get(key)
+            return dict(record) if isinstance(record, dict) else None
+
+    def put(self, key: str, value: dict) -> None:
+        with self.workspace.lock:
+            current = self.workspace.read("analysis_cache.json", {})
+            current.pop(key, None)
+            current[key] = value
+            if len(current) > self.limit:
+                current = dict(list(current.items())[-self.limit:])
+            self.workspace.write("analysis_cache.json", current)
