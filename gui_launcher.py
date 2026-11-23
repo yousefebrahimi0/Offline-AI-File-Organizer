@@ -17,7 +17,7 @@ def main():
     sys.argv = [
         "streamlit", "run", app_path,
         "--server.address=127.0.0.1",
-        "--server.headless=true",
+        "--server.headless=false",
         "--browser.gatherUsageStats=false",
     ]
     stcli.main()

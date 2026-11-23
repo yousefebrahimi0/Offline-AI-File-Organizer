@@ -89,7 +89,7 @@ python -m pip install -e ".[gui]"
 offline-ai-organizer-gui
 ```
 
-The GUI launches Streamlit on **127.0.0.1** (not a public server). It includes model settings, review/edit/skip proposals, checked application, watch controls and undo history. Cloud providers transmit file content to the selected provider; choose LM Studio or Ollama if you want local processing. API keys in GUI are not written to a plan/log.
+The GUI launches Streamlit on **127.0.0.1** (not a public server) and opens your browser; if needed, visit **http://127.0.0.1:8501** manually. It includes model settings, review/edit/skip proposals, checked application, watch controls and undo history. Cloud providers transmit file content to the selected provider; choose LM Studio or Ollama if you want local processing. API keys in GUI are not written to a plan/log.
 
 For the CLI-only installation:
 
