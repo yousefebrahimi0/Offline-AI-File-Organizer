@@ -69,3 +69,7 @@ Thumbs.db
 organization_log_*.json
 test_files/
 temp/
+
+# Generated review plans
+review_plan_*.json
+watch_plan_*.json

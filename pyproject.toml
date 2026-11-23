@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "offline-ai-file-organizer"
+version = "2.3.0"
+description = "Privacy-first AI file renaming and organization with review, undo and watch folders."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [{name = "Yousef Ebrahimi"}]
+keywords = ["file-organizer", "local-ai", "llm", "renaming", "watchdog"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+    "pypdf>=4.0.0",
+    "python-docx>=1.0.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "ebooklib>=0.18",
+    "requests>=2.31.0",
+    "PyYAML>=6.0.0",
+    "watchdog>=4.0.0",
+]
+
+[project.optional-dependencies]
+gui = ["streamlit>=1.35,<2"]
+ocr = ["Pillow>=10", "pytesseract>=0.3.10"]
+test = ["pytest>=8", "build>=1.2", "twine>=5"]
+all = ["streamlit>=1.35,<2", "Pillow>=10", "pytesseract>=0.3.10"]
+
+[project.scripts]
+offline-ai-organizer = "file_organizer:main"
+offline-ai-organizer-gui = "gui_launcher:main"
+
+[project.urls]
+Repository = "https://github.com/yousefebrahimi0/Offline-AI-File-Organizer"
+Issues = "https://github.com/yousefebrahimi0/Offline-AI-File-Organizer/issues"
+
+[tool.setuptools]
+py-modules = ["file_organizer", "watch_folder", "web_app", "ui_watch", "ui_helpers", "gui_launcher"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

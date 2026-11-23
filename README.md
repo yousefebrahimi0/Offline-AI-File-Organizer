@@ -17,6 +17,12 @@ Automatically rename and organize your documents (and optionally images) using A
 
 ## 🆕 Updates
 
+### v2.3 — Local Web UI and Installable Package
+- **Optional Streamlit dashboard**: locally review, edit, approve and undo suggested changes without using the CLI.
+- **Live monitor controls**: start and stop review-only or explicitly authorized automatic watch sessions in the browser.
+- **Installable Python package**: command-line and local GUI launchers, optional OCR/UI dependencies, wheel and source distributions.
+- **Cross-platform CI**: Windows, macOS and Linux across multiple supported Python versions.
+
 ### v2.1 — Safer File Operations
 - **Versioned plans**: New plans store source size, modification time and SHA-256 fingerprints and must match the selected root folder.
 - **No-overwrite execution**: Applying a plan preflights every action and refuses existing destinations, changed sources, symbolic links and paths outside the selected folder.
@@ -73,6 +79,26 @@ Automatically rename and organize your documents (and optionally images) using A
 - **Images (Optional)**: PNG, JPG, JPEG, WEBP (enable via `config.yaml` or `--include-images` using a Vision LLM or `pytesseract` OCR)
 
 ---
+
+## 🖥️ Local web interface and package installation
+
+Install directly from this repository (no PyPI release required):
+
+```bash
+python -m pip install -e ".[gui]"
+offline-ai-organizer-gui
+```
+
+The GUI launches Streamlit on **127.0.0.1** (not a public server). It includes model settings, review/edit/skip proposals, checked application, watch controls and undo history. Cloud providers transmit file content to the selected provider; choose LM Studio or Ollama if you want local processing. API keys in GUI are not written to a plan/log.
+
+For the CLI-only installation:
+
+```bash
+python -m pip install -e .
+offline-ai-organizer --help
+```
+
+Optional image OCR requires `python -m pip install -e ".[ocr]"` plus a separately installed Tesseract executable. Run the web interface on a trusted local machine only; do not expose its port on your network or the internet.
 
 ## 🚀 Quick Start
 
