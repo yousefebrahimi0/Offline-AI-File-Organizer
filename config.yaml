@@ -1,0 +1,54 @@
+# Offline AI File Organizer Configuration
+# Supports ANY OpenAI-compatible local or cloud LLM, plus native Anthropic & Gemini.
+
+llm:
+  # Provider presets:
+  #   - "lm_studio"         (default: http://localhost:1234/v1)
+  #   - "ollama"            (default: http://localhost:11434/v1)
+  #   - "llama_cpp"         (default: http://localhost:8080/v1)
+  #   - "openai"            (default: https://api.openai.com/v1)
+  #   - "openrouter"        (default: https://openrouter.ai/api/v1)
+  #   - "anthropic"         (default: https://api.anthropic.com/v1/messages)
+  #   - "gemini"            (default: https://generativelanguage.googleapis.com/v1beta)
+  #   - "openai_compatible" (any custom base_url)
+  provider: "lm_studio"
+
+  # Leave empty ("") to use the provider's default URL
+  base_url: ""
+
+  # Leave as "auto" to auto-detect the first loaded model from local /v1/models
+  # Or set any model name, e.g.:
+  #   "mistral-7b-instruct", "llama3.2", "qwen2.5:7b",
+  #   "gpt-4o-mini", "claude-3-5-haiku-latest", "gemini-2.0-flash"
+  model: "auto"
+
+  # Optional API key (recommended: set via environment variable instead)
+  # Env vars checked automatically: LLM_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY,
+  # ANTHROPIC_API_KEY, GEMINI_API_KEY
+  api_key: ""
+
+  temperature: 0.2
+  max_tokens: 120
+  timeout: 45
+
+organizer:
+  max_content_length: 3000
+  organize_folder_name: "Organized"
+  ignore_folders:
+    - "Organized"
+    - ".git"
+    - "__pycache__"
+    - "node_modules"
+    - ".venv"
+    - "venv"
+  categories:
+    - "Work"
+    - "Personal"
+    - "Finance"
+    - "Medical"
+    - "Education"
+    - "Legal"
+    - "Photos"
+    - "Projects"
+    - "Archive"
+    - "Miscellaneous"
