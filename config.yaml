@@ -44,6 +44,9 @@ organizer:
     - "node_modules"
     - ".venv"
     - "venv"
+  # Bounded concurrent analysis; actual file moves remain serialized.
+  watch_workers: 2
+  watch_stability_seconds: 1.5
   categories:
     - "Work"
     - "Personal"

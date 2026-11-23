@@ -5,3 +5,4 @@ pandas>=2.0.0
 ebooklib>=0.18
 requests>=2.31.0
 PyYAML>=6.0.0
+watchdog>=4.0.0

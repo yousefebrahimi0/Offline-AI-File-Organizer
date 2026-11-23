@@ -1035,6 +1035,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--save-plan", metavar="PLAN_FILE", help="Save dry-run plan to a JSON file and exit")
     parser.add_argument("--apply-plan", metavar="PLAN_FILE", help="Apply a previously saved plan JSON file")
     parser.add_argument("--yes", action="store_true", help="Apply changes without interactive confirmation")
+    parser.add_argument("--watch", action="store_true", help="Continuously watch --folder for new or changed files")
+    parser.add_argument("--workers", type=int, help="Maximum parallel file-analysis workers (watch mode)")
+    parser.add_argument("--stability-delay", type=float, help="Seconds a file must remain unchanged before analysis (watch mode)")
+    parser.add_argument("--auto-apply", action="store_true", help="Automatically move watched files; otherwise save a review plan")
     parser.add_argument("--undo", metavar="LOG_FILE", help="Undo changes from a saved organization_log_*.json file")
     return parser.parse_args(argv)
 
@@ -1058,6 +1062,13 @@ def main(argv: Optional[List[str]] = None):
     if args.include_images:
         cfg["organizer"]["enable_images"] = True
 
+    if args.auto_apply and not args.watch:
+        raise SystemExit("--auto-apply can only be used together with --watch.")
+    if args.workers is not None and args.workers < 1:
+        raise SystemExit("--workers must be at least 1.")
+    if args.stability_delay is not None and args.stability_delay < 0:
+        raise SystemExit("--stability-delay cannot be negative.")
+
     if args.apply_plan:
         with open(args.apply_plan, "r", encoding="utf-8") as f:
             plan_data = json.load(f)
@@ -1076,6 +1087,8 @@ def main(argv: Optional[List[str]] = None):
         """
     )
 
+    if args.watch and not args.folder:
+        raise SystemExit("Watch mode requires --folder PATH.")
     folder_path = args.folder or input("Enter the folder path to organize: ").strip('"')
     if not os.path.exists(folder_path):
         print("❌ Folder does not exist!")
@@ -1084,6 +1097,9 @@ def main(argv: Optional[List[str]] = None):
     if args.rename or args.organize:
         rename = args.rename
         organize = args.organize
+    elif args.watch:
+        rename = True
+        organize = True
     else:
         print("\nOptions:")
         print("1. Rename files only")
@@ -1101,6 +1117,25 @@ def main(argv: Optional[List[str]] = None):
         print(f"✗ {msg}")
         return
     print(f"✓ {msg}")
+
+    if args.watch:
+        from watch_folder import run_watch_mode
+
+        watch_cfg = cfg["organizer"]
+        workers = args.workers if args.workers is not None else int(watch_cfg.get("watch_workers", 2))
+        stability_delay = (
+            args.stability_delay
+            if args.stability_delay is not None
+            else float(watch_cfg.get("watch_stability_seconds", 1.5))
+        )
+        return run_watch_mode(
+            organizer,
+            rename=rename,
+            organize=organize,
+            workers=workers,
+            stability_seconds=stability_delay,
+            auto_apply=args.auto_apply,
+        )
 
     print("\n⚠️  Building DRY RUN plan (no files will be modified yet)...")
     plan = organizer.build_plan(rename=rename, organize=organize)
