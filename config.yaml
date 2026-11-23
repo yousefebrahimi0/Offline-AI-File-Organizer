@@ -18,7 +18,7 @@ llm:
 
   # Leave as "auto" to auto-detect the first loaded model from local /v1/models
   # Or set any model name, e.g.:
-  #   "mistral-7b-instruct", "llama3.2", "qwen2.5:7b",
+  #   "mistral-7b-instruct", "llama3.2", "qwen2.5:7b", "qwen2.5-vl",
   #   "gpt-4o-mini", "claude-3-5-haiku-latest", "gemini-2.0-flash"
   model: "auto"
 
@@ -34,6 +34,9 @@ llm:
 organizer:
   max_content_length: 3000
   organize_folder_name: "Organized"
+  # Set to true (or pass --include-images) to organize PNG/JPG/WEBP via Vision LLM or OCR
+  enable_images: false
+  use_vision_model: true
   ignore_folders:
     - "Organized"
     - ".git"

@@ -1,17 +1,28 @@
 # 🤖 Offline AI File Organizer
-> *I kept telling myself I'd organize my files "later." days passed. Thousands of cryptic filenames piled up. I checked and reviewed some apps on windows to rename and organize my files but non of them were good enough, So one day I realized: why force discipline when I can automate intelligence specially using local LLM? So I built this.*
+> *I kept telling myself I'd organize my files "later." Days passed. Thousands of cryptic filenames piled up. I checked and reviewed some apps on Windows to rename and organize my files, but none of them were good enough. So one day I realized: why force discipline when I can automate intelligence using local LLMs? So I built this.*
 
 ![Offline AI File Organizer Banner](banner.png)
 
-**Transform your messy file system into an organized masterpiece using local AI.**
+**Transform your messy file system into an organized masterpiece using any local or cloud LLM.**
 
-Automatically rename and organize your documents using AI that runs entirely on your machine. No cloud uploads, no privacy concerns, just intelligent file management powered by local LLMs.
+Automatically rename and organize your documents (and optionally images) using AI that runs entirely on your machine—or connect any OpenAI-compatible, Anthropic, or Gemini model you prefer.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.7+-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/AI-Local%20LLM-purple.svg" alt="Local AI">
+  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
+  <img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/AI-Any%20Local%20or%20Cloud%20LLM-purple.svg" alt="Universal LLM">
 </p>
+
+---
+
+## 🆕 Updates
+
+### v2.0 — Universal LLM Support, Plan Caching, Undo, & Expanded Formats
+- **Universal LLM Provider Layer**: No longer locked to LM Studio + Mistral-7B. Connect **LM Studio**, **Ollama**, **llama.cpp**, **OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**, or any custom OpenAI-compatible endpoint via `config.yaml` or CLI flags, with automatic local model detection (`model: "auto"`).
+- **Cached Dry-Run Plans & One-Click Undo**: Dry-run results are now cached so live mode applies the exact approved changes without calling the LLM twice. Added `--save-plan`, `--apply-plan`, and `--undo <log.json>` to safely reverse any batch.
+- **Expanded Format & Image Support**: Added built-in extractors for `.rtf`, `.odt`, and `.pptx`, migrated PDF parsing from deprecated `PyPDF2` to `pypdf` (with `None`-safe handling for scanned PDFs), and added optional image organization (`--include-images`) via Vision-Language Models (VLMs) or `pytesseract` OCR.
+- **Reliability & Security Fixes**: Automatically excludes `Organized/` and ignored folders from recursive scans, sanitizes AI-generated categories against an allowed list to prevent invalid paths, and combines naming + categorization into a single structured JSON prompt.
+- **Automated Testing (CI)**: Added a `pytest` unit test suite and GitHub Actions workflow.
 
 ---
 
@@ -20,53 +31,49 @@ Automatically rename and organize your documents using AI that runs entirely on 
 ### 🎯 Intelligent Renaming
 - **AI-Powered Analysis**: Reads actual file content to generate meaningful names
 - **Smart Naming**: Transforms `8a095-4d0f6a90008b.pdf` → `My personal test on NY project (2025-03).pdf`
-- **Date Integration**: Automatically adds modification date (YYYY-MM) to filenames
+- **Date Integration**: Automatically adds modification date (`YYYY-MM`) to filenames
 - **Duplicate Handling**: Safely manages duplicate names with incremental suffixes
-- **Supports Two languages**: You can choose English or Persian as a language for analysis
+- **Multilingual**: Supports both English and Persian content
 
 ### 📁 Smart Organization
 - **Content-Based Categorization**: AI analyzes documents and sorts them into relevant folders
-- **Predefined Categories**: Work, Personal, Finance, Medical, Education, Legal, Projects, Archive, Miscellaneous
-- **Folder Structure Creation**: Automatically creates organized directory structure
+- **Customizable Categories**: Edit your folder taxonomy directly in `config.yaml`
+- **Ignore Rules**: Automatically skips `Organized/`, `.git/`, `node_modules/`, and virtual environments
 - **Recursive Processing**: Handles nested folders and subdirectories
 
-### 🔒 Privacy First
-- **100% Offline**: All processing happens locally on your machine
-- **No Cloud Upload**: Your sensitive documents never leave your computer
-- **Local LLM**: Uses LM Studio with models like Mistral-7B-Instruct
+### 🔌 Universal LLM Support (Privacy-First)
+- **100% Offline by Default**: Works out of the box with **LM Studio**, **Ollama**, or **llama.cpp**
+- **Bring Your Own Model**: Switch to any local model (`auto`-detected) or cloud API (**OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**) in `config.yaml` or via CLI flags
 
 ### 🛡️ Safety Features
-- **Dry Run Mode**: Preview all changes before applying them
-- **Detailed Logging**: JSON log of all operations for easy reversal
-- **Error Handling**: Gracefully handles corrupted or inaccessible files
+- **Exact Dry-Run Plan Caching**: Live mode executes the exact plan you reviewed—zero drift
+- **Save & Replay Plans**: Export a dry-run plan with `--save-plan plan.json` and apply later with `--apply-plan plan.json`
+- **One-Click Undo**: Reverse any run with `python file_organizer.py --undo <organization_log.json>`
 - **Non-Destructive**: Original files are moved/renamed, never deleted
 
 ---
 
 ## 📋 Supported File Types
 
-**Documents**: PDF, DOC, DOCX, TXT, MD, RTF, ODT  
-**Spreadsheets**: CSV, XLSX, XLS  
-**E-books**: EPUB
-
-*Images, videos, and audio files are intentionally excluded to focus on document organization.*
+- **Documents**: PDF, DOCX, TXT, MD, RTF, ODT, PPTX
+- **Spreadsheets**: CSV, XLSX, XLS
+- **E-books**: EPUB
+- **Images (Optional)**: PNG, JPG, JPEG, WEBP (enable via `config.yaml` or `--include-images` using a Vision LLM or `pytesseract` OCR)
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
-1. **Python 3.7+** - [Download here](https://www.python.org/downloads/)
-2. **LM Studio** - [Download here](https://lmstudio.ai/)
-3. A local LLM model (e.g., Mistral-7B-Instruct)
+1. **Python 3.9+** - [Download here](https://www.python.org/downloads/)
+2. A local LLM runner such as **LM Studio** ([lmstudio.ai](https://lmstudio.ai/)) or **Ollama** ([ollama.com](https://ollama.com/)), **or** an API key for OpenAI / OpenRouter / Anthropic / Gemini.
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yousefebrahimi0/ai-file-organizer.git
-   cd ai-file-organizer
+   git clone https://github.com/yousefebrahimi0/Offline-AI-File-Organizer.git
+   cd Offline-AI-File-Organizer
    ```
 
 2. **Install dependencies**
@@ -75,194 +82,67 @@ Automatically rename and organize your documents using AI that runs entirely on 
    ```
 ![Screenshot One](screenshot1.png)
 
-3. **Start LM Studio**
-   - Open LM Studio
-   - Load your preferred model (Mistral-7B-Instruct recommended)
-   - Go to **Local Server** tab
-   - Click **Start Server** (default port: 1234)
+3. **Configure your LLM (`config.yaml`)**
+   - For **LM Studio**: Start the local server (port `1234`) with any loaded model. `config.yaml` defaults to `provider: "lm_studio"` and `model: "auto"`.
+   - For **Ollama**: Set `provider: "ollama"` in `config.yaml` (or pass `--provider ollama`).
+   - For **Cloud / Custom APIs**: Set `provider` and `model` in `config.yaml` and export your API key (e.g., `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `LLM_API_KEY`).
 
 ![Screenshot Two](screenshot2.png)
 
 ### Usage
 
-1. **Run the script**
-   ```bash
-   python file_organizer.py
-   ```
-
-2. **Follow the prompts**
-   - Enter the path to your messy folder
-   - Choose operation mode:
-     - `1` - Rename files only
-     - `2` - Organize into folders only
-     - `3` - Both rename and organize
-   
-3. **Review dry run**
-   - Script shows what changes will be made
-   - No files are modified yet
-
-4. **Confirm changes**
-   - Type `yes` to apply changes
-   - Type `no` to cancel
-
----
-
-## 📖 How It Works
-
-```
-┌─────────────────┐
-│  Select Folder  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Scan Files     │  (Recursive, all subdirectories)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Extract Content │  (PDF text, DOC content, CSV headers, etc.)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Send to AI     │  (Local LM Studio API)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Generate Names  │  (Descriptive + Date suffix)
-│  & Categories   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Dry Run View   │  (Preview all changes)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Apply Changes   │  (On user confirmation)
-└─────────────────┘
-```
-
----
-
-## 🎯 Use Cases
-
-### Personal Organization
-- Sort years of accumulated personal documents
-- Organize medical records, bills, and receipts
-- Manage school/university papers
-
-### Professional Workflow
-- Organize project documentation
-- Sort client files and contracts
-- Manage research papers and references
-
-### Digital Cleanup
-- Clean up Downloads folder
-- Organize scanned documents
-- Sort archived files
-
----
-
-## ⚙️ Configuration
-
-### LM Studio Settings
-The script connects to LM Studio at `http://localhost:1234` by default. To change:
-
-```python
-LM_STUDIO_URL = "http://localhost:YOUR_PORT/v1/chat/completions"
-```
-
-### Content Extraction Limits
-Adjust how much content is sent to AI:
-
-```python
-MAX_CONTENT_LENGTH = 3000  # Characters to analyze
-```
-
-### Supported File Extensions
-Modify the supported file types:
-
-```python
-SUPPORTED_EXTENSIONS = {
-    '.pdf', '.doc', '.docx', '.txt', '.epub', 
-    '.csv', '.xlsx', '.xls', '.rtf', '.odt', '.md'
-}
-```
-
----
-
-## 📊 Example Output
-
-### Before
-```
-Documents/
-├── 8a095-4d0f6a90008b.pdf
-├── scan_20231015_142033.pdf
-├── IMG_9876.docx
-├── untitled-final-v2.xlsx
-└── document (3).txt
-```
-
-### After (Rename + Organize)
-```
-Documents/Organized/
-├── Medical/
-│   ├── Blood Test Results (2023-10).pdf
-│   └── Vaccination Record (2023-08).pdf
-├── Finance/
-│   ├── Monthly Budget Tracker (2023-12).xlsx
-│   └── Tax Documents 2023 (2024-01).pdf
-└── Personal/
-    ├── Travel Itinerary Europe (2023-09).docx
-    └── Recipe Collection (2023-11).txt
-```
-
----
-
-## 🔧 Troubleshooting
-
-### "Cannot connect to LM Studio"
-- Ensure LM Studio is running
-- Verify server is on port 1234
-- Check firewall settings
-
-### "Module not found" error
+#### Interactive Mode
 ```bash
-pip install --upgrade -r requirements.txt
+python file_organizer.py
 ```
 
-### Slow processing
-- Use a smaller/faster model
-- Reduce `MAX_CONTENT_LENGTH`
-- Increase API timeout in code
+#### CLI Examples
+```bash
+# Organize with local Ollama (auto-detects loaded model)
+python file_organizer.py --folder "./Downloads" --provider ollama --rename --organize
 
-### Permission errors
-- Run with administrator privileges (Windows)
-- Check folder write permissions
+# Include images using a local or cloud Vision model
+python file_organizer.py --folder "./Receipts" --provider ollama --model qwen2.5-vl --include-images --rename --organize
+
+# Save a dry-run plan to review, then apply it later
+python file_organizer.py --folder "./Docs" --rename --organize --save-plan plan.json
+python file_organizer.py --apply-plan plan.json
+
+# Undo a previous run
+python file_organizer.py --undo "./Downloads/organization_log_20261123_153000.json"
+```
 
 ---
 
-## 🤝 Contributing
+## ⚙️ Configuration (`config.yaml`)
 
-Contributions are welcome! Here's how you can help:
+```yaml
+llm:
+  provider: "lm_studio"   # lm_studio, ollama, llama_cpp, openai, openrouter, anthropic, gemini, openai_compatible
+  base_url: ""            # Optional custom endpoint
+  model: "auto"           # Auto-detect local model, or specify any model name
+  api_key: ""             # Prefer environment variables for cloud keys
+  temperature: 0.2
+  max_tokens: 120
+  timeout: 45
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+organizer:
+  max_content_length: 3000
+  organize_folder_name: "Organized"
+  enable_images: false
+  use_vision_model: true
+  ignore_folders: ["Organized", ".git", "__pycache__", "node_modules", ".venv", "venv"]
+  categories: ["Work", "Personal", "Finance", "Medical", "Education", "Legal", "Photos", "Projects", "Archive", "Miscellaneous"]
+```
 
-### Ideas for Contributions
-- [ ] Support for more file formats
-- [ ] Custom category templates
-- [ ] GUI interface
-- [ ] Undo functionality
-- [ ] Other languages to support
-- [ ] Integration with other local LLM frameworks
+---
+
+## 🧪 Running Tests
+
+```bash
+pip install pytest
+python -m pytest -v
+```
 
 ---
 
@@ -270,21 +150,7 @@ Contributions are welcome! Here's how you can help:
 Licensed under the [Apache License 2.0](LICENSE).
 
 If you use this project in your work, software, or research, please include the attribution in the [NOTICE](NOTICE) file and credit:
-> Yousef Ebrahimi — https://github.com/[your-username]/[repo-name]
-
----
-
-## 🙏 Acknowledgments
-
-- **LM Studio** - For providing an excellent local LLM runtime
-- **Mistral AI** - For the Mistral-7B-Instruct model
-- All contributors and users of this project
-
----
-
-## 📧 Contact
-
-Have questions or suggestions? Open an issue or reach out!
+> Yousef Ebrahimi — https://github.com/yousefebrahimi0/Offline-AI-File-Organizer
 
 ---
 

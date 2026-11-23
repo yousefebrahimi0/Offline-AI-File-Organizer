@@ -1,15 +1,18 @@
 """
 Offline AI-Powered File Organizer and Renamer by Yousef; https://github.com/yousefebrahimi0/
 Uses any local or cloud LLM (LM Studio, Ollama, llama.cpp, OpenAI, OpenRouter, Anthropic, Gemini)
-to intelligently rename and organize files with dry-run plan caching and one-click undo.
+to intelligently rename and organize documents and optional images with dry-run plan caching and undo.
 """
 
 import argparse
+import base64
 import json
+import mimetypes
 import os
 import re
 import shutil
-import sys
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import yaml
 
-# Optional document extraction libraries (graceful fallback per format)
+# Optional document & OCR libraries (graceful fallback per format)
 try:
     from pypdf import PdfReader
 except ImportError:
@@ -38,8 +41,15 @@ try:
 except ImportError:
     epub = None
 
+try:
+    import pytesseract
+    from PIL import Image
+except ImportError:
+    pytesseract = None
+    Image = None
 
-SUPPORTED_EXTENSIONS = {
+
+DOCUMENT_EXTENSIONS = {
     ".pdf",
     ".docx",
     ".txt",
@@ -48,7 +58,19 @@ SUPPORTED_EXTENSIONS = {
     ".xlsx",
     ".xls",
     ".md",
+    ".rtf",
+    ".odt",
+    ".pptx",
 }
+
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
+
+SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS
 
 DEFAULT_CATEGORIES = [
     "Work",
@@ -122,6 +144,8 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         "organizer": {
             "max_content_length": 3000,
             "organize_folder_name": "Organized",
+            "enable_images": False,
+            "use_vision_model": True,
             "ignore_folders": [
                 "Organized",
                 ".git",
@@ -226,8 +250,14 @@ class UniversalLLMClient:
 
         return False, f"Unsupported provider: {self.provider}"
 
-    def chat(self, prompt: str) -> Optional[str]:
-        """Send a single-turn user prompt and return the text response."""
+    def chat(self, prompt: str, image_path: Optional[Path] = None) -> Optional[str]:
+        """Send a single-turn user prompt (with optional image for VLM models)."""
+        b64_image = None
+        mime_type = "image/jpeg"
+        if image_path is not None and image_path.exists():
+            mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
+            b64_image = base64.b64encode(image_path.read_bytes()).decode("ascii")
+
         try:
             if self.api_type == "openai":
                 url = (
@@ -235,9 +265,20 @@ class UniversalLLMClient:
                     if self.base_url.endswith("/chat/completions")
                     else f"{self.base_url}/chat/completions"
                 )
+                if b64_image:
+                    user_content: Any = [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
+                        },
+                    ]
+                else:
+                    user_content = prompt
+
                 payload = {
                     "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [{"role": "user", "content": user_content}],
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                 }
@@ -255,11 +296,26 @@ class UniversalLLMClient:
                     "x-api-key": self.api_key,
                     "anthropic-version": "2023-06-01",
                 }
+                if b64_image:
+                    content_blocks: Any = [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime_type,
+                                "data": b64_image,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ]
+                else:
+                    content_blocks = prompt
+
                 payload = {
                     "model": self.model,
                     "max_tokens": self.max_tokens,
                     "temperature": self.temperature,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": [{"role": "user", "content": content_blocks}],
                 }
                 resp = requests.post(
                     self.base_url, headers=headers, json=payload, timeout=self.timeout
@@ -272,8 +328,11 @@ class UniversalLLMClient:
 
             if self.api_type == "gemini":
                 url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+                parts: List[Dict[str, Any]] = [{"text": prompt}]
+                if b64_image:
+                    parts.append({"inline_data": {"mime_type": mime_type, "data": b64_image}})
                 payload = {
-                    "contents": [{"parts": [{"text": prompt}]}],
+                    "contents": [{"parts": parts}],
                     "generationConfig": {
                         "temperature": self.temperature,
                         "maxOutputTokens": self.max_tokens,
@@ -283,8 +342,8 @@ class UniversalLLMClient:
                 if resp.status_code == 200:
                     candidates = resp.json().get("candidates", [])
                     if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        return "".join(p.get("text", "") for p in parts).strip()
+                        resp_parts = candidates[0].get("content", {}).get("parts", [])
+                        return "".join(p.get("text", "") for p in resp_parts).strip()
                 print(f"Gemini request failed ({resp.status_code}): {resp.text[:200]}")
                 return None
         except Exception as e:
@@ -306,6 +365,8 @@ class FileOrganizer:
 
         self.max_content_length = int(org_cfg.get("max_content_length", 3000))
         self.organize_folder_name = org_cfg.get("organize_folder_name", "Organized")
+        self.enable_images = bool(org_cfg.get("enable_images", False))
+        self.use_vision_model = bool(org_cfg.get("use_vision_model", True))
         self.ignore_folders = set(org_cfg.get("ignore_folders", ["Organized", ".git"]))
         self.ignore_folders.add(self.organize_folder_name)
         self.categories = list(org_cfg.get("categories", DEFAULT_CATEGORIES))
@@ -327,6 +388,11 @@ class FileOrganizer:
         self.planned_actions: List[Dict[str, str]] = []
         self.executed_log: List[Dict[str, str]] = []
 
+    def _active_extensions(self) -> set:
+        if self.enable_images:
+            return DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
+        return DOCUMENT_EXTENSIONS
+
     def _is_ignored(self, file_path: Path) -> bool:
         """Skip files inside Organized/ or other ignored directories."""
         try:
@@ -337,15 +403,45 @@ class FileOrganizer:
 
     def discover_files(self) -> List[Path]:
         """Find all supported files while excluding ignored directories."""
+        allowed = self._active_extensions()
         files = []
         for file_path in sorted(self.root_folder.rglob("*")):
             if (
                 file_path.is_file()
-                and file_path.suffix.lower() in SUPPORTED_EXTENSIONS
+                and file_path.suffix.lower() in allowed
                 and not self._is_ignored(file_path)
             ):
                 files.append(file_path)
         return files
+
+    @staticmethod
+    def _extract_rtf(file_path: Path) -> str:
+        raw = file_path.read_text(encoding="utf-8", errors="ignore")
+        text = re.sub(r"\\'[0-9a-fA-F]{2}", " ", raw)
+        text = re.sub(r"\\[a-zA-Z]+-?\d* ?", " ", text)
+        text = re.sub(r"[{}]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _extract_odt(file_path: Path) -> str:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            xml_bytes = zf.read("content.xml")
+        root = ET.fromstring(xml_bytes)
+        return " ".join(t.strip() for t in root.itertext() if t and t.strip())
+
+    @staticmethod
+    def _extract_pptx(file_path: Path) -> str:
+        chunks = []
+        with zipfile.ZipFile(file_path, "r") as zf:
+            slide_names = sorted(
+                n for n in zf.namelist() if n.startswith("ppt/slides/slide") and n.endswith(".xml")
+            )
+            for slide in slide_names[:10]:
+                root = ET.fromstring(zf.read(slide))
+                slide_text = " ".join(t.strip() for t in root.itertext() if t and t.strip())
+                if slide_text:
+                    chunks.append(slide_text)
+        return " ".join(chunks)
 
     def extract_text_content(self, file_path: Path) -> str:
         """Extract text content safely from supported file types."""
@@ -371,6 +467,15 @@ class FileOrganizer:
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read(self.max_content_length)
 
+            elif ext == ".rtf":
+                content = self._extract_rtf(file_path)
+
+            elif ext == ".odt":
+                content = self._extract_odt(file_path)
+
+            elif ext == ".pptx":
+                content = self._extract_pptx(file_path)
+
             elif ext == ".csv" and pd is not None:
                 df = pd.read_csv(file_path, nrows=10)
                 content = f"CSV with columns: {', '.join(map(str, df.columns.tolist()))}\n"
@@ -385,6 +490,14 @@ class FileOrganizer:
                 book = epub.read_epub(str(file_path))
                 title = book.get_metadata("DC", "title")
                 content = f"EPUB Book: {title[0][0] if title else 'Unknown'}"
+
+            elif ext in IMAGE_EXTENSIONS:
+                if pytesseract is not None and Image is not None:
+                    ocr_text = pytesseract.image_to_string(Image.open(file_path))
+                    if ocr_text.strip():
+                        content = f"Image OCR text: {ocr_text.strip()}"
+                if not content:
+                    content = f"Image file: {file_path.stem}"
 
         except Exception as e:
             print(f"Error extracting content from {file_path.name}: {e}")
@@ -438,8 +551,9 @@ class FileOrganizer:
         content = self.extract_text_content(file_path)
         file_date = self.get_file_date_string(file_path)
         categories_str = ", ".join(self.categories)
+        is_image = file_path.suffix.lower() in IMAGE_EXTENSIONS
 
-        prompt = f"""You are a file organization assistant. Analyze the document below and respond with ONLY a valid JSON object.
+        prompt = f"""You are a file organization assistant. Analyze the file below and respond with ONLY a valid JSON object.
 
 JSON format:
 {{"filename": "Descriptive Title Without Extension", "category": "OneCategory"}}
@@ -453,7 +567,8 @@ File date: {file_date}
 Content preview:
 {content[:1200]}"""
 
-        raw = self.llm.chat(prompt)
+        image_arg = file_path if (is_image and self.use_vision_model) else None
+        raw = self.llm.chat(prompt, image_path=image_arg)
         if not raw:
             return None, "Miscellaneous"
 
@@ -520,6 +635,31 @@ Content preview:
             )
             print(f"  → Planned: {file_path.name}  ==>  {rel_new}")
 
+        return self.planned_actions
+
+    def save_plan(self, plan_file_path: str) -> Path:
+        """Save the dry-run plan to JSON for later review or execution."""
+        path = Path(plan_file_path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "version": 2,
+                    "root_folder": str(self.root_folder),
+                    "timestamp": datetime.now().isoformat(),
+                    "actions": self.planned_actions,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"\n✓ Plan saved to: {path}")
+        return path
+
+    def load_plan(self, plan_file_path: str) -> List[Dict[str, str]]:
+        """Load a previously saved dry-run plan JSON."""
+        with open(plan_file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.planned_actions = data.get("actions", [])
         return self.planned_actions
 
     def apply_plan(self, save_log: bool = True) -> Optional[Path]:
@@ -596,6 +736,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--api-key", help="API key (prefer env vars)")
     parser.add_argument("--rename", action="store_true", help="Rename files")
     parser.add_argument("--organize", action="store_true", help="Organize files into category folders")
+    parser.add_argument("--include-images", action="store_true", help="Include PNG/JPG/WEBP images via Vision LLM or OCR")
+    parser.add_argument("--save-plan", metavar="PLAN_FILE", help="Save dry-run plan to a JSON file and exit")
+    parser.add_argument("--apply-plan", metavar="PLAN_FILE", help="Apply a previously saved plan JSON file")
     parser.add_argument("--yes", action="store_true", help="Apply changes without interactive confirmation")
     parser.add_argument("--undo", metavar="LOG_FILE", help="Undo changes from a saved organization_log_*.json file")
     return parser.parse_args(argv)
@@ -617,6 +760,17 @@ def main(argv: Optional[List[str]] = None):
         cfg["llm"]["model"] = args.model
     if args.api_key:
         cfg["llm"]["api_key"] = args.api_key
+    if args.include_images:
+        cfg["organizer"]["enable_images"] = True
+
+    if args.apply_plan:
+        with open(args.apply_plan, "r", encoding="utf-8") as f:
+            plan_data = json.load(f)
+        root = args.folder or plan_data.get("root_folder", ".")
+        organizer = FileOrganizer(root, config=cfg)
+        organizer.load_plan(args.apply_plan)
+        organizer.apply_plan(save_log=True)
+        return
 
     print(
         """
@@ -657,6 +811,10 @@ def main(argv: Optional[List[str]] = None):
     plan = organizer.build_plan(rename=rename, organize=organize)
     if not plan:
         print("\nNo changes planned.")
+        return
+
+    if args.save_plan:
+        organizer.save_plan(args.save_plan)
         return
 
     proceed = "yes" if args.yes else input("\nApply these exact changes? (yes/no): ").strip().lower()
