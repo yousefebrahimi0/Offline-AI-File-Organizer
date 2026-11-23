@@ -1132,7 +1132,7 @@ def main(argv: Optional[List[str]] = None):
             if args.stability_delay is not None
             else float(watch_cfg.get("watch_stability_seconds", 1.5))
         )
-        return run_watch_mode(
+        run_watch_mode(
             organizer,
             rename=rename,
             organize=organize,
@@ -1140,6 +1140,7 @@ def main(argv: Optional[List[str]] = None):
             stability_seconds=stability_delay,
             auto_apply=args.auto_apply,
         )
+        return
 
     print("\n⚠️  Building DRY RUN plan (no files will be modified yet)...")
     plan = organizer.build_plan(rename=rename, organize=organize)
