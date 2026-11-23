@@ -166,10 +166,20 @@ class WatchFolderService:
     def _build_action(self, path: Path) -> Optional[Dict[str, Any]]:
         """Analyse one stable source and return a version 3 plan action."""
         before = self.organizer._file_fingerprint(path)
-        name, category = self.organizer.analyze_file(path, rename=self.rename, organize=self.organize)
+        duplicate = self.organizer.duplicate_of(path, before)
+        if duplicate:
+            self.organizer.review_queue.add(path, f"Identical file already exists: {duplicate}", before)
+            with self._state_lock:
+                self._stats["skipped"] += 1
+            return None
+        details = self.organizer.suggest_file(
+            path, rename=self.rename, organize=self.organize, fingerprint=before
+        )
         with self._state_lock:
             self._stats["analysed"] += 1
 
+        name = details.get("filename") if details else None
+        category = details.get("category") if details else None
         if (self.rename and not name) or (self.organize and not category):
             with self._state_lock:
                 self._stats["skipped"] += 1
@@ -184,16 +194,16 @@ class WatchFolderService:
             return None
 
         file_date = self.organizer.get_file_date_string(path)
-        target_dir = self.root / self.organizer.organize_folder_name / category if self.organize else path.parent
-        if self.rename:
-            base_name = self.organizer.sanitize_filename(f"{name} ({file_date})", max_len=180)
-            if not base_name:
-                with self._state_lock:
-                    self._stats["skipped"] += 1
-                return None
-            target_name = f"{base_name}{path.suffix}"
-        else:
-            target_name = path.name
+        target_dir = self.organizer.target_directory(
+            path, category or "", details.get("subcategory", ""), self.organize
+        )
+        target_name = (
+            self.organizer.format_target_name(
+                name, path, category or "",
+                details.get("document_date", ""), details.get("vendor", "")
+            )
+            if self.rename else path.name
+        )
 
         desired = (target_dir / target_name).resolve(strict=False)
         if desired == path.resolve():
@@ -207,6 +217,9 @@ class WatchFolderService:
             "old_path": str(path.resolve()),
             "new_path": str(desired),
             "category": category if self.organize else "",
+            "subcategory": details.get("subcategory", "") if self.organize else "",
+            "reason": details.get("reason", ""),
+            "source": details.get("source", "ai"),
             "source_fingerprint": before,
         }
 
@@ -303,6 +316,9 @@ class WatchFolderService:
             logged["new_path"] = str(target)
             logged["result_fingerprint"] = moved_fingerprint
             self._log_actions.append(logged)
+            self.organizer.duplicate_index.replace_path(
+                source, target, action["source_fingerprint"]["sha256"]
+            )
             self._stats["moved"] += 1
             with self._state_lock:
                 # Ignore this exact self-generated event version, but allow later edits.

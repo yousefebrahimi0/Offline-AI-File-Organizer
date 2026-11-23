@@ -12,6 +12,8 @@ Rename and categorize documents based on their contents using **local or cloud L
 
 > **Privacy:** With LM Studio, Ollama, or llama.cpp running locally, AI processing can stay on your computer. **Cloud models are optional, but choosing them sends analyzed file content to the configured provider.** The interface itself runs on localhost; this does not make a remote model private.
 
+**Smart Organization v3:** The default profile allows one approved subfolder beneath each category. You can also choose Simple (one level) or Custom (your own approved two-level taxonomy). The AI cannot invent arbitrary folder names. The UI includes a Needs Review queue and reusable sorting rules.
+
 ## What you can do
 
 | Feature | User benefit |
@@ -79,28 +81,72 @@ The dashboard also includes **Watch folder** and **History / undo** tabs.
 
 > Start with a folder of **copied test files**, especially before enabling automatic watch-folder moves.
 
+## Smart Organization v3: how it saves time and model tokens
+
+The dashboard's main flow is **choose a folder → choose Smart, Simple, or Custom → review proposed changes → approve**. A persistent **Needs Review** queue stores uncertain or duplicate files without moving or deleting them. Manually reviewed items can be moved to an approved destination and optionally turned into reusable narrow rules.
+
+### Reusable rules and cache
+
+Filename rules are applied **before** calling any LLM; for example:
+
+```yaml
+organizer:
+  profile: smart
+  detect_duplicates: true
+  cache_ai_results: true
+  naming_template: "{title} ({date})"
+  rules:
+    - pattern: "*invoice*.pdf"
+      category: Finance
+      subcategory: Invoices
+```
+
+Rules can also include a required text fragment. Add rules through the **Sorting rules** tab. Successful AI classifications are cached locally by content fingerprint, filename, model and taxonomy; unchanged inputs do not need repeated AI inference. Changing the file invalidates its cached result.
+
+The cache and review queue live under `.organizer/` inside the selected folder. They contain filenames and classifications, not extracted full documents or credentials. The app never silently converts one correction into a broad rule.
+
+### Image description and optional document OCR
+
+- A short, structured request asks the model for filename, category, approved subcategory, and a brief rationale. For images it emphasizes **visible objects and readable text**, not guessed identities or unknown locations.
+- Images are optionally processed with **local OCR first**. A screenshot or receipt with readable text can skip a multimodal request.
+- When a vision request is needed, Pillow creates a **resized in-memory image** (default maximum 1024 pixels, with optimized compression); original images are untouched. Payload bytes are usually smaller, but actual billable vision tokens depend on the provider.
+- Digital PDFs sample initial and last pages; scanned PDFs can use **optional PyMuPDF and Tesseract** OCR. DOCX parsing includes small tables.
+- Conservative local regexes extract possible document dates and vendor hints; filename templates support `{title}`, `{date}`, `{category}`, `{document_date}`, and `{vendor}`. These hints are not guaranteed correct and should be reviewed.
+
+To enable OCR, install `python -m pip install -e ".[ocr]"` **and the Tesseract executable** separately. We intentionally do not bundle heavyweight OCR foundation models.
+
+References informing the design: [Image Description Toolkit](https://github.com/TheIdeaPlace/Image-Description-Toolkit) for configurable image workflows, and [Awesome OCR LLM](https://github.com/yuliang-liu/awesome-ocr-llm) for OCR research. This project uses original code, without bundling either repository.
+
+### Easier local setup
+
+On Windows run `setup_windows.bat`; on macOS/Linux run `bash setup_macos_linux.sh`. Both create a local Python virtual environment and install the GUI, then launch it. **Python 3.9+ is still required:** these scripts are not signed standalone installers.
+
 ## How categorization works today
 
-The organizer **recursively scans existing input subfolders**, but its **generated output taxonomy is flat**: a single category level under `Organized/`.
+The organizer recursively scans input subfolders. The **Smart** profile (default) creates only approved category/subcategory paths, such as `Finance/Invoices`. Select **Simple** for one category level or **Custom** to specify a two-level taxonomy.
 
 ```text
 Selected folder/
 └── Organized/
     ├── Work/
-    ├── Personal/
+    │   ├── Projects/
+    │   └── Reports/
     ├── Finance/
-    ├── Medical/
+    │   ├── Invoices/
+    │   ├── Receipts/
+    │   └── Statements/
+    ├── Personal/
+    │   ├── Identity/
+    │   └── Medical/
     ├── Education/
-    ├── Legal/
+    │   └── Research/
     ├── Photos/
-    ├── Projects/
-    ├── Archive/
-    └── Miscellaneous/
+    └── Projects/
 ```
 
-Only categories receiving files are created. These names can be customized in `config.yaml`. The app does **not yet** create nested structures such as `Finance/Invoices/2026` or invent unlimited new folders.
+Only categories receiving files are created. These names can be customized in `config.yaml`. Smart can create `Finance/Invoices`, but cannot create a third level such as `Finance/Invoices/2026` or unlimited folders.
 
-The AI returns one suggested category from the configured list. Unrecognized category names may fall back to `Miscellaneous`; this is **not a calibrated confidence score**.
+The AI must choose from an **approved set of categories**. Unrecognized or ambiguous classifications—including uncertain `Miscellaneous` results—go to the **Needs Review** queue without moving files. This is not a calibrated confidence score.
 
 ## Local and cloud AI providers
 
@@ -168,7 +214,7 @@ Image analysis is disabled by default. Enable it in `config.yaml` or with `--inc
 python -m pip install -e ".[ocr]"
 ```
 
-Tesseract itself must be installed separately. **Scanned PDF OCR is not yet built in.** Audio/video analysis and semantic search are also not implemented.
+Tesseract itself must be installed separately. **Optional scanned-PDF OCR** uses PyMuPDF to render pages before Tesseract extraction. Without the optional OCR dependencies, scanned PDFs fall back to filename-based context. Audio/video analysis and semantic search are not implemented.
 
 ## Configuration
 
@@ -197,17 +243,13 @@ organizer:
 - **Not a single transaction:** A batch can partially succeed if later moves fail; consult the execution log.
 - **AI can be wrong:** Review sensitive documents and category suggestions before applying changes.
 - **Local app ≠ local inference:** Remote cloud models can receive the file content analyzed by the program.
-- **Not yet a full file manager:** No arbitrary nested categories, content-based deduplication, semantic search, or standalone desktop installers.
+- **Not yet a full file manager:** No arbitrary-depth category trees, automatic duplicate deletion, semantic search, or standalone desktop installers. Duplicate detection queues matching files for review.
 
 ## What could come next?
 
-These are **ideas, not current features**:
+The v3 release already includes a review queue, Smart/Simple/Custom two-level profiles, rules that avoid AI calls, duplicate detection, locally extracted document hints, optional scanned-PDF OCR, and manual approval workflows.
 
-- **Simpler default taxonomy:** A small number of everyday categories, with an `Uncertain / Needs Review` queue instead of filing weak guesses into `Miscellaneous`.
-- **Optional two-level organization profiles:** For example `Finance/Invoices` or `Work/Projects`, with maximum depth controlled by the user.
-- **Reusable rules and learning from corrections:** Remember user-approved category decisions and deterministic filename rules.
-- **Better document understanding:** Scanned PDF OCR, tables, dates, vendors, and invoice metadata.
-- **Desktop-quality distribution:** Optional one-click installers and packaged local-model setup.
+Still planned: **native signed Windows/macOS installers**, semantic document search, optional heavier OCR engines for complex layouts, and better on-device model onboarding.
 
 ## Development and testing
 

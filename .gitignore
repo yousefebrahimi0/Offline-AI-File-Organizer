@@ -73,3 +73,6 @@ temp/
 # Generated review plans
 review_plan_*.json
 watch_plan_*.json
+
+# Local organization rules, AI cache and review queue
+.organizer/
