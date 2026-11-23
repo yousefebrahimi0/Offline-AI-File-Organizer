@@ -486,12 +486,16 @@ class FileOrganizer:
                 shutil.copystat(source, target, follow_symlinks=False)
                 target_fingerprint = FileOrganizer._file_fingerprint(target)
 
-                # Last check immediately before unlinking the source.
+                # Confirm the source has not changed while its handle was open.
                 final_source = source.stat()
                 if identity(after_fd) != identity(final_source):
                     raise ValueError(f"Source changed before it could be removed: {source}")
-                source.unlink()
 
+            # Windows refuses unlinking a file while this process still has
+            # its source handle open. Close it before the final identity check.
+            if identity(after_fd) != identity(source.stat()):
+                raise ValueError(f"Source changed before it could be removed: {source}")
+            source.unlink()
             return target_fingerprint
         except Exception:
             if created_target:
@@ -1128,7 +1132,7 @@ def main(argv: Optional[List[str]] = None):
             if args.stability_delay is not None
             else float(watch_cfg.get("watch_stability_seconds", 1.5))
         )
-        return run_watch_mode(
+        run_watch_mode(
             organizer,
             rename=rename,
             organize=organize,
@@ -1136,6 +1140,7 @@ def main(argv: Optional[List[str]] = None):
             stability_seconds=stability_delay,
             auto_apply=args.auto_apply,
         )
+        return
 
     print("\n⚠️  Building DRY RUN plan (no files will be modified yet)...")
     plan = organizer.build_plan(rename=rename, organize=organize)
