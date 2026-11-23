@@ -264,3 +264,135 @@ def test_load_plan_rejects_wrong_root_and_legacy_unsafe_plan(tmp_path):
     )
     with pytest.raises(ValueError, match="Unsupported or unsafe plan format"):
         organizer.load_plan(str(legacy_file))
+
+
+
+def test_watch_mode_saves_review_plan_without_moving_files(tmp_path):
+    from watch_folder import WatchFolderService
+
+    source = tmp_path / "incoming.txt"
+    source.write_text("A new project note", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "New Project Note", "category": "Projects"}']),
+    )
+    service = WatchFolderService(organizer, workers=1, stability_seconds=0, poll_interval=0.01)
+    assert service.submit(source) is True
+    result = service.shutdown()
+
+    assert source.exists()
+    assert result["plan_path"] is not None
+    plan_data = json.loads(result["plan_path"].read_text(encoding="utf-8"))
+    assert plan_data["version"] == 3
+    assert len(plan_data["actions"]) == 1
+    assert result["stats"]["planned"] == 1
+
+
+def test_watch_mode_auto_apply_writes_undo_log(tmp_path):
+    from watch_folder import WatchFolderService
+
+    source = tmp_path / "incoming.txt"
+    source.write_text("A new project note", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "New Project Note", "category": "Projects"}']),
+    )
+    service = WatchFolderService(
+        organizer, workers=1, stability_seconds=0, poll_interval=0.01, auto_apply=True
+    )
+    assert service.submit(source) is True
+    result = service.shutdown()
+
+    assert not source.exists()
+    assert result["log_path"] is not None
+    log_data = json.loads(result["log_path"].read_text(encoding="utf-8"))
+    target = Path(log_data["actions"][0]["new_path"])
+    assert target.exists()
+    assert FileOrganizer.undo_from_log(str(result["log_path"])) == 1
+    assert source.exists()
+
+
+def test_watch_mode_coalesces_duplicate_events(tmp_path):
+    import threading
+    from watch_folder import WatchFolderService
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingLLM:
+        provider = "fake"
+        def __init__(self):
+            self.calls = 0
+        def chat(self, prompt, image_path=None):
+            self.calls += 1
+            started.set()
+            assert release.wait(timeout=5)
+            return '{"filename": "Stable Note", "category": "Projects"}'
+
+    source = tmp_path / "incoming.txt"
+    source.write_text("A stable document", encoding="utf-8")
+    llm = BlockingLLM()
+    organizer = FileOrganizer(str(tmp_path), llm_client=llm)
+    service = WatchFolderService(organizer, workers=1, stability_seconds=0, poll_interval=0.01)
+
+    assert service.submit(source) is True
+    assert started.wait(timeout=5)
+    assert service.submit(source) is False
+    release.set()
+    result = service.shutdown()
+
+    assert llm.calls == 1
+    assert result["stats"]["events"] == 2
+    assert result["stats"]["planned"] == 1
+
+
+def test_watch_mode_parallelizes_analysis_with_worker_limit(tmp_path):
+    import threading
+    import time
+    from watch_folder import WatchFolderService
+
+    class ParallelLLM:
+        provider = "fake"
+        def __init__(self):
+            self.active = 0
+            self.maximum = 0
+            self.lock = threading.Lock()
+        def chat(self, prompt, image_path=None):
+            with self.lock:
+                self.active += 1
+                self.maximum = max(self.maximum, self.active)
+            time.sleep(0.12)
+            with self.lock:
+                self.active -= 1
+            return '{"filename": "Parallel Analysis", "category": "Projects"}'
+
+    for filename in ("one.txt", "two.txt", "three.txt"):
+        (tmp_path / filename).write_text(filename, encoding="utf-8")
+    llm = ParallelLLM()
+    organizer = FileOrganizer(str(tmp_path), llm_client=llm)
+    service = WatchFolderService(organizer, workers=2, stability_seconds=0, poll_interval=0.01)
+    for filename in ("one.txt", "two.txt", "three.txt"):
+        assert service.submit(tmp_path / filename) is True
+    result = service.shutdown()
+
+    assert llm.maximum == 2
+    assert result["stats"]["planned"] == 3
+    assert result["plan_path"] is not None
+
+
+def test_watch_mode_ignores_organized_and_unsupported_files(tmp_path):
+    from watch_folder import WatchFolderService
+
+    organized = tmp_path / "Organized" / "Projects" / "old.txt"
+    organized.parent.mkdir(parents=True)
+    organized.write_text("Already organized", encoding="utf-8")
+    unsupported = tmp_path / "video.mp4"
+    unsupported.write_text("not supported", encoding="utf-8")
+    organizer = FileOrganizer(str(tmp_path), llm_client=FakeLLM([]))
+    service = WatchFolderService(organizer, workers=1, stability_seconds=0, poll_interval=0.01)
+
+    assert service.submit(organized) is False
+    assert service.submit(unsupported) is False
+    result = service.shutdown()
+    assert result["stats"]["planned"] == 0
+    assert result["plan_path"] is None

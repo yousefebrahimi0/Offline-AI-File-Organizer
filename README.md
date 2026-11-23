@@ -24,6 +24,11 @@ Automatically rename and organize your documents (and optionally images) using A
 - **AI failure handling**: Files are skipped when the model fails or returns incomplete JSON instead of being filed under `Miscellaneous`.
 - **Plan compatibility**: Version 2 saved plans must be regenerated; version 2 organization logs can still be used for undo if kept in their original root folder.
 
+### v2.2 — Watch-Folder Mode & Parallel Analysis
+- **Watch folders**: Monitor a folder recursively for new or modified supported files with `watchdog`. Files must remain stable before analysis begins, so incomplete copies are not processed.
+- **Parallel analysis**: Configure a bounded worker pool for concurrent extraction and LLM requests. File moves are serialized to prevent destination collisions.
+- **Review-first by default**: Watch mode saves a version 3 approval plan and does not move files unless `--auto-apply` is explicitly supplied. Automatic moves are recorded in a standard undo log.
+
 ### v2.0 — Universal LLM Support, Plan Caching, Undo, & Expanded Formats
 - **Universal LLM Provider Layer**: No longer locked to LM Studio + Mistral-7B. Connect **LM Studio**, **Ollama**, **llama.cpp**, **OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**, or any custom OpenAI-compatible endpoint via `config.yaml` or CLI flags, with automatic local model detection (`model: "auto"`).
 - **Cached Dry-Run Plans & One-Click Undo**: Dry-run results are now cached so live mode applies the exact approved changes without calling the LLM twice. Added `--save-plan`, `--apply-plan`, and `--undo <log.json>` to safely reverse any batch.
@@ -97,6 +102,20 @@ Automatically rename and organize your documents (and optionally images) using A
 ![Screenshot Two](screenshot2.png)
 
 ### Usage
+
+#### Watch-folder mode
+```bash
+# Analyse new or changed files in parallel and save an approval plan.
+# Files are not moved until you review and apply the plan.
+python file_organizer.py --folder "./Downloads" --watch --rename --organize --workers 3
+
+# Explicitly opt in to automatic moving; every successful move is logged for undo.
+python file_organizer.py --folder "./Downloads" --watch --rename --organize --workers 3 --auto-apply
+```
+
+Stop the watcher with Ctrl+C. In review-only mode, a `watch_plan_*.json` file is written to the watched folder and can be applied later with `--apply-plan`. Automatic mode writes an `organization_log_watch_*.json` undo log.
+
+The stability delay defaults to 1.5 seconds and can be changed with `--stability-delay`. The worker count defaults to 2 and can be changed with `--workers`.
 
 #### Interactive Mode
 ```bash
