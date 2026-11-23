@@ -22,8 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import yaml
 
-from smart_organizer import DuplicateIndex, ReviewQueue, RuleBook, Taxonomy, Workspace, SMART_SUBCATEGORIES
-from document_intelligence import exif_hint, image_ocr, optimized_image, scanned_pdf_ocr
+from smart_organizer import AnalysisCache, DuplicateIndex, ReviewQueue, RuleBook, Taxonomy, Workspace, SMART_SUBCATEGORIES
+from document_intelligence import document_hints, exif_hint, image_ocr, optimized_image, scanned_pdf_ocr
 
 # Optional document & OCR libraries (graceful fallback per format)
 try:
@@ -163,6 +163,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             "profile": "smart",
             "smart_subcategories": dict(SMART_SUBCATEGORIES),
             "detect_duplicates": True,
+            "cache_ai_results": True,
             "naming_template": "{title} ({date})",
             "image_max_dimension": 1024,
             "image_quality": 76,
@@ -396,6 +397,8 @@ class FileOrganizer:
         self.workspace = Workspace(self.root_folder)
         self.rulebook = RuleBook(self.workspace, self.taxonomy, org_cfg.get("rules", []))
         self.review_queue = ReviewQueue(self.workspace)
+        self.analysis_cache = AnalysisCache(self.workspace)
+        self.cache_ai_results = bool(org_cfg.get("cache_ai_results", True))
         self.detect_duplicates = bool(org_cfg.get("detect_duplicates", True))
         self.duplicate_index = DuplicateIndex()
         self._duplicate_index_ready = False
@@ -801,21 +804,29 @@ class FileOrganizer:
         self._ensure_duplicates()
         return self.duplicate_index.find_or_register(path, fingerprint)
 
-    def format_target_name(self, title: str, file_path: Path, category: str = "") -> str:
+    def format_target_name(
+        self, title: str, file_path: Path, category: str = "",
+        document_date: str = "", vendor: str = ""
+    ) -> str:
         """Only known template placeholders are expanded, never arbitrary Python fields."""
         title = self.sanitize_filename(title, max_len=80)
         date = self.get_file_date_string(file_path)
-        mapping = {"title": title, "date": date, "category": category or ""}
+        mapping = {
+            "title": title, "date": date, "category": category or "",
+            "document_date": document_date or date,
+            "vendor": self.sanitize_filename(vendor, max_len=50),
+        }
         value = self.naming_template
-        for field in ("title", "date", "category"):
+        for field in ("title", "date", "category", "document_date", "vendor"):
             value = value.replace("{" + field + "}", mapping[field])
         if "{" in value or "}" in value:
-            raise ValueError("Naming template supports only {title}, {date}, {category}.")
+            raise ValueError("Invalid naming template placeholder.")
         base = self.sanitize_filename(value, max_len=180)
         return f"{base}{file_path.suffix}" if base else file_path.name
 
     def suggest_file(
-        self, file_path: Path, rename: bool = True, organize: bool = True
+        self, file_path: Path, rename: bool = True, organize: bool = True,
+        fingerprint: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, str]]:
         """One structured AI request at most; deterministic approved rules bypass AI."""
         file_path = Path(file_path)
@@ -833,7 +844,22 @@ class FileOrganizer:
                 "source": "rule",
             }
 
+        fingerprint = fingerprint or self._file_fingerprint(file_path)
+        cache_key = AnalysisCache.key([
+            "smart-v3.1", fingerprint["sha256"], file_path.name,
+            self.get_file_date_string(file_path), rename, organize,
+            self.profile, self.taxonomy.subcategories, self.categories,
+            self.use_vision_model, self.ocr_first_images,
+            getattr(self.llm, "provider", ""), getattr(self.llm, "model", ""),
+        ])
+        if self.cache_ai_results:
+            cached = self.analysis_cache.get(cache_key)
+            if cached:
+                cached["source"] = "cache"
+                return cached
+
         content = self.extract_text_content(file_path)
+        hints = document_hints(content)
         is_image = file_path.suffix.lower() in IMAGE_EXTENSIONS
         image_arg = None
         if is_image and self.use_vision_model:
@@ -847,14 +873,21 @@ class FileOrganizer:
             return None
 
         prompts = self.taxonomy.prompt_categories() if organize else "not needed"
+        image_instructions = (
+            "For images, describe only visible subjects, objects and readable text. "
+            "Do not guess identity or an unknown location. "
+            if is_image else ""
+        )
         prompt = (
-            'Classify a file. Reply ONLY compact JSON keys filename, category, subcategory, reason. '
-            'filename: descriptive, up to 60 chars, no extension; reason: 8 words max. '
-            'If unclear, set category to "Needs Review". '
-            'Choose category EXACTLY from allowed roots; subcategory must be listed for that root or empty. '
-            f'Allowed roots and subcategories: {prompts}. '
-            f'Original: {file_path.stem}; date: {self.get_file_date_string(file_path)}. '
-            f'Content: {content[:950]}'
+            'Classify a file. Output ONLY JSON keys filename, category, subcategory, reason. '
+            'filename: accurate 2-7 words, no extension; reason: max 8 words. '
+            'If unsure, category "Needs Review". Never invent dates or text. '
+            'Use only allowed categories/subcategories; subcategory can be empty. '
+            f'{image_instructions}'
+            f'Allowed folders: {prompts}. '
+            f'Original: {file_path.stem}; modification: {self.get_file_date_string(file_path)}. '
+            f'Metadata hints: {json.dumps(hints, separators=(",", ":")) if hints else "none"}. '
+            f'Preview: {content[:900]}'
         )
         raw = self.llm.chat(prompt, image_path=image_arg)
         parsed = self._parse_json_response(raw or "")
@@ -869,19 +902,24 @@ class FileOrganizer:
         category, subcategory = "", ""
         if organize:
             category = self.taxonomy.category(parsed.get("category", ""))
-            if category is None:
+            if category is None or category == "Miscellaneous":
                 self.review_queue.add(file_path, "AI category uncertain or outside approved categories.")
                 return None
             subcategory = self.taxonomy.subcategory(category, parsed.get("subcategory", ""))
             if subcategory is None:
                 self.review_queue.add(file_path, "AI subcategory outside approved taxonomy.")
                 return None
-        return {
+        result = {
             "filename": title, "category": category,
             "subcategory": subcategory,
             "reason": parsed.get("reason", "")[:100],
             "source": "ai",
+            "document_date": hints.get("document_date", ""),
+            "vendor": hints.get("vendor", ""),
         }
+        if self.cache_ai_results:
+            self.analysis_cache.put(cache_key, result)
+        return result
 
     def analyze_file(
         self, file_path: Path, rename: bool = True, organize: bool = True
@@ -913,7 +951,9 @@ class FileOrganizer:
                     print(f"  ⚠️  Duplicate content: {duplicate}")
                     continue
 
-                details = self.suggest_file(path, rename=rename, organize=organize)
+                details = self.suggest_file(
+                    path, rename=rename, organize=organize, fingerprint=before
+                )
                 if not details:
                     print(f"  ⚠️  Needs review: {path.name} (left untouched)")
                     continue
@@ -927,7 +967,10 @@ class FileOrganizer:
                     path, details["category"], details["subcategory"], organize,
                 )
                 new_name = (
-                    self.format_target_name(details["filename"], path, details["category"])
+                    self.format_target_name(
+                        details["filename"], path, details["category"],
+                        details.get("document_date", ""), details.get("vendor", "")
+                    )
                     if rename else path.name
                 )
                 desired = target_dir / new_name

@@ -51,6 +51,8 @@ organizer:
   # subfolder. "simple" uses only top-level categories; "custom" uses this map.
   profile: "smart"
   detect_duplicates: true
+  cache_ai_results: true
+  # Optional: {document_date} and {vendor} use locally extracted hints
   naming_template: "{title} ({date})"
   image_max_dimension: 1024
   image_quality: 76

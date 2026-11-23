@@ -172,7 +172,9 @@ class WatchFolderService:
             with self._state_lock:
                 self._stats["skipped"] += 1
             return None
-        details = self.organizer.suggest_file(path, rename=self.rename, organize=self.organize)
+        details = self.organizer.suggest_file(
+            path, rename=self.rename, organize=self.organize, fingerprint=before
+        )
         with self._state_lock:
             self._stats["analysed"] += 1
 
@@ -196,7 +198,10 @@ class WatchFolderService:
             path, category or "", details.get("subcategory", ""), self.organize
         )
         target_name = (
-            self.organizer.format_target_name(name, path, category or "")
+            self.organizer.format_target_name(
+                name, path, category or "",
+                details.get("document_date", ""), details.get("vendor", "")
+            )
             if self.rename else path.name
         )
 
