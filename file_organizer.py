@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import shutil
+import threading
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
@@ -20,6 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import yaml
+
+from smart_organizer import DuplicateIndex, ReviewQueue, RuleBook, Taxonomy, Workspace, SMART_SUBCATEGORIES
+from document_intelligence import exif_hint, image_ocr, optimized_image, scanned_pdf_ocr
 
 # Optional document & OCR libraries (graceful fallback per format)
 try:
@@ -139,7 +143,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             "model": "auto",
             "api_key": "",
             "temperature": 0.2,
-            "max_tokens": 120,
+            "max_tokens": 160,
             "timeout": 45,
         },
         "organizer": {
@@ -156,6 +160,15 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
                 "venv",
             ],
             "categories": list(DEFAULT_CATEGORIES),
+            "profile": "smart",
+            "smart_subcategories": dict(SMART_SUBCATEGORIES),
+            "detect_duplicates": True,
+            "naming_template": "{title} ({date})",
+            "image_max_dimension": 1024,
+            "image_quality": 76,
+            "ocr_first_images": True,
+            "ocr_scanned_pdfs": True,
+            "rules": [],
         },
     }
 
@@ -182,6 +195,8 @@ class UniversalLLMClient:
         temperature: float = 0.2,
         max_tokens: int = 120,
         timeout: int = 45,
+        image_max_dimension: int = 1024,
+        image_quality: int = 76,
     ):
         self.provider = (provider or "lm_studio").lower().strip()
         preset = PROVIDER_DEFAULTS.get(self.provider, PROVIDER_DEFAULTS["openai_compatible"])
@@ -191,6 +206,8 @@ class UniversalLLMClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.image_max_dimension = image_max_dimension
+        self.image_quality = image_quality
 
         env_key_name = preset.get("env_key")
         self.api_key = (
@@ -256,8 +273,9 @@ class UniversalLLMClient:
         b64_image = None
         mime_type = "image/jpeg"
         if image_path is not None and image_path.exists():
-            mime_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
-            b64_image = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            mime_type, b64_image = optimized_image(
+                image_path, self.image_max_dimension, self.image_quality
+            )
 
         try:
             if self.api_type == "openai":
@@ -370,7 +388,21 @@ class FileOrganizer:
         self.use_vision_model = bool(org_cfg.get("use_vision_model", True))
         self.ignore_folders = set(org_cfg.get("ignore_folders", ["Organized", ".git"]))
         self.ignore_folders.add(self.organize_folder_name)
+        self.ignore_folders.add(".organizer")
         self.categories = list(org_cfg.get("categories", DEFAULT_CATEGORIES))
+        self.profile = org_cfg.get("profile", "smart")
+        subcategories = org_cfg.get("smart_subcategories", SMART_SUBCATEGORIES)
+        self.taxonomy = Taxonomy(self.categories, self.profile, subcategories)
+        self.workspace = Workspace(self.root_folder)
+        self.rulebook = RuleBook(self.workspace, self.taxonomy, org_cfg.get("rules", []))
+        self.review_queue = ReviewQueue(self.workspace)
+        self.detect_duplicates = bool(org_cfg.get("detect_duplicates", True))
+        self.duplicate_index = DuplicateIndex()
+        self._duplicate_index_ready = False
+        self._duplicate_lock = threading.Lock()
+        self.naming_template = str(org_cfg.get("naming_template", "{title} ({date})"))
+        self.ocr_first_images = bool(org_cfg.get("ocr_first_images", True))
+        self.ocr_scanned_pdfs = bool(org_cfg.get("ocr_scanned_pdfs", True))
 
         if llm_client is not None:
             self.llm = llm_client
@@ -384,6 +416,8 @@ class FileOrganizer:
                 temperature=float(llm_cfg.get("temperature", 0.2)),
                 max_tokens=int(llm_cfg.get("max_tokens", 120)),
                 timeout=int(llm_cfg.get("timeout", 45)),
+                image_max_dimension=int(org_cfg.get("image_max_dimension", 1024)),
+                image_quality=int(org_cfg.get("image_quality", 76)),
             )
 
         self.planned_actions: List[Dict[str, str]] = []
@@ -529,6 +563,14 @@ class FileOrganizer:
             raise ValueError("A plan cannot use the selected root folder as a file path.")
         if require_source and not old_path.is_file():
             raise FileNotFoundError(f"Planned source file is missing: {old_path}")
+        # Organizing may use a top category and one vetted subcategory, never deeper.
+        if action.get("category") and action.get("subcategory"):
+            allowed = self.taxonomy.target_dir(
+                self.root_folder, self.organize_folder_name,
+                action["category"], action["subcategory"],
+            )
+            if new_path.parent.resolve(strict=False) != allowed.resolve(strict=False):
+                raise ValueError("Plan destination violates approved folder depth.")
         return old_path, new_path
 
     def _preflight_plan(self) -> List[Tuple[Dict[str, Any], Path, Path]]:
@@ -640,15 +682,25 @@ class FileOrganizer:
                 with open(file_path, "rb") as f:
                     pdf_reader = PdfReader(f)
                     chunks = []
-                    for page in pdf_reader.pages[:3]:
-                        text = page.extract_text() or ""
+                    pages = pdf_reader.pages
+                    page_count = len(pages)
+                    indices = sorted({0, 1, page_count - 1} & set(range(page_count)))
+                    for index in indices:
+                        text = pages[index].extract_text() or ""
                         if text:
                             chunks.append(text)
                     content = " ".join(chunks)
+                if not content.strip() and self.ocr_scanned_pdfs:
+                    content = scanned_pdf_ocr(file_path)
 
             elif ext == ".docx" and docx is not None:
                 doc = docx.Document(file_path)
-                content = " ".join(para.text for para in doc.paragraphs[:20] if para.text)
+                paragraphs = [para.text for para in doc.paragraphs[:20] if para.text]
+                tables = []
+                for table in doc.tables[:3]:
+                    for row in table.rows[:8]:
+                        tables.append(" | ".join(cell.text.strip() for cell in row.cells))
+                content = " ".join(paragraphs + tables)
 
             elif ext in (".txt", ".md"):
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -679,12 +731,12 @@ class FileOrganizer:
                 content = f"EPUB Book: {title[0][0] if title else 'Unknown'}"
 
             elif ext in IMAGE_EXTENSIONS:
-                if pytesseract is not None and Image is not None:
-                    ocr_text = pytesseract.image_to_string(Image.open(file_path))
-                    if ocr_text.strip():
-                        content = f"Image OCR text: {ocr_text.strip()}"
-                if not content:
-                    content = f"Image file: {file_path.stem}"
+                ocr_text = image_ocr(file_path, self.max_content_length)
+                hint = exif_hint(file_path)
+                if ocr_text:
+                    content = f"Image OCR: {ocr_text}. {hint}"
+                else:
+                    content = f"Image file: {file_path.stem}. {hint}"
 
         except Exception as e:
             print(f"Error extracting content from {file_path.name}: {e}")
@@ -731,131 +783,182 @@ class FileOrganizer:
             pass
         return {}
 
+    def _ensure_duplicates(self) -> None:
+        if not self.detect_duplicates or self._duplicate_index_ready:
+            return
+        with self._duplicate_lock:
+            if not self._duplicate_index_ready:
+                self.duplicate_index.scan_organized(
+                    self.root_folder / self.organize_folder_name,
+                    self._file_fingerprint,
+                    self._active_extensions(),
+                )
+                self._duplicate_index_ready = True
+
+    def duplicate_of(self, path: Path, fingerprint: Dict[str, Any]) -> Optional[str]:
+        if not self.detect_duplicates:
+            return None
+        self._ensure_duplicates()
+        return self.duplicate_index.find_or_register(path, fingerprint)
+
+    def format_target_name(self, title: str, file_path: Path, category: str = "") -> str:
+        """Only known template placeholders are expanded, never arbitrary Python fields."""
+        title = self.sanitize_filename(title, max_len=80)
+        date = self.get_file_date_string(file_path)
+        mapping = {"title": title, "date": date, "category": category or ""}
+        value = self.naming_template
+        for field in ("title", "date", "category"):
+            value = value.replace("{" + field + "}", mapping[field])
+        if "{" in value or "}" in value:
+            raise ValueError("Naming template supports only {title}, {date}, {category}.")
+        base = self.sanitize_filename(value, max_len=180)
+        return f"{base}{file_path.suffix}" if base else file_path.name
+
+    def suggest_file(
+        self, file_path: Path, rename: bool = True, organize: bool = True
+    ) -> Optional[Dict[str, str]]:
+        """One structured AI request at most; deterministic approved rules bypass AI."""
+        file_path = Path(file_path)
+        # Cheap filename-only rules avoid both extraction and model tokens.
+        rule = self.rulebook.match(file_path)
+        if rule is None and any(r.get("contains") for r in self.rulebook.list_rules() if isinstance(r, dict)):
+            preview = self.extract_text_content(file_path)
+            rule = self.rulebook.match(file_path, preview)
+        if rule:
+            return {
+                "filename": self.sanitize_filename(file_path.stem, max_len=60) if rename else "",
+                "category": rule["category"] if organize else "",
+                "subcategory": rule["subcategory"] if organize else "",
+                "reason": f"Matched filename rule: {rule['pattern']}",
+                "source": "rule",
+            }
+
+        content = self.extract_text_content(file_path)
+        is_image = file_path.suffix.lower() in IMAGE_EXTENSIONS
+        image_arg = None
+        if is_image and self.use_vision_model:
+            # OCR is cheaper than a vision request for readable screenshots/receipts.
+            has_ocr_text = "Image OCR:" in content and len(content.split("Image OCR:", 1)[1].strip()) >= 32
+            if not self.ocr_first_images or not has_ocr_text:
+                image_arg = file_path
+
+        if is_image and image_arg is None and content.startswith("Image file:"):
+            self.review_queue.add(file_path, "Image has no readable OCR text and vision is disabled.")
+            return None
+
+        prompts = self.taxonomy.prompt_categories() if organize else "not needed"
+        prompt = (
+            'Classify a file. Reply ONLY compact JSON keys filename, category, subcategory, reason. '
+            'filename: descriptive, up to 60 chars, no extension; reason: 8 words max. '
+            'If unclear, set category to "Needs Review". '
+            'Choose category EXACTLY from allowed roots; subcategory must be listed for that root or empty. '
+            f'Allowed roots and subcategories: {prompts}. '
+            f'Original: {file_path.stem}; date: {self.get_file_date_string(file_path)}. '
+            f'Content: {content[:950]}'
+        )
+        raw = self.llm.chat(prompt, image_path=image_arg)
+        parsed = self._parse_json_response(raw or "")
+        if not parsed:
+            self.review_queue.add(file_path, "Model did not return valid classification JSON.")
+            return None
+        title = self.sanitize_filename(parsed.get("filename", ""), max_len=60) if rename else ""
+        if rename and not title:
+            self.review_queue.add(file_path, "Model did not provide a useful filename.")
+            return None
+
+        category, subcategory = "", ""
+        if organize:
+            category = self.taxonomy.category(parsed.get("category", ""))
+            if category is None:
+                self.review_queue.add(file_path, "AI category uncertain or outside approved categories.")
+                return None
+            subcategory = self.taxonomy.subcategory(category, parsed.get("subcategory", ""))
+            if subcategory is None:
+                self.review_queue.add(file_path, "AI subcategory outside approved taxonomy.")
+                return None
+        return {
+            "filename": title, "category": category,
+            "subcategory": subcategory,
+            "reason": parsed.get("reason", "")[:100],
+            "source": "ai",
+        }
+
     def analyze_file(
         self, file_path: Path, rename: bool = True, organize: bool = True
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Analyse one file; return missing values when the response is unusable."""
-        content = self.extract_text_content(file_path)
-        file_date = self.get_file_date_string(file_path)
-        categories_str = ", ".join(self.categories)
-        is_image = file_path.suffix.lower() in IMAGE_EXTENSIONS
+        """Compatibility interface for callers needing only name/category."""
+        result = self.suggest_file(file_path, rename=rename, organize=organize)
+        return (result["filename"] or None, result["category"] or None) if result else (None, None)
 
-        prompt = f"""You are a file organization assistant. Analyze the file below and respond with ONLY a valid JSON object.
-
-JSON format:
-{{"filename": "Descriptive Title Without Extension", "category": "OneCategory"}}
-
-Rules:
-- filename: clear, specific, max 60 chars, no file extension, title case (or Persian if content is Persian).
-- category: MUST be one of [{categories_str}].
-
-Original filename: {file_path.stem}
-File date: {file_date}
-Content preview:
-{content[:1200]}"""
-
-        image_arg = file_path if (is_image and self.use_vision_model) else None
-        raw = self.llm.chat(prompt, image_path=image_arg)
-        if not raw:
-            return None, None
-
-        parsed = self._parse_json_response(raw)
-        if not parsed:
-            return None, None
-
-        suggested_name = None
-        if rename:
-            raw_name = parsed.get("filename", "").strip()
-            if not raw_name:
-                return None, None
-            suggested_name = self.sanitize_filename(raw_name, max_len=60)
-            if not suggested_name:
-                return None, None
-
-        category = None
-        if organize:
-            raw_category = parsed.get("category", "").strip()
-            if not raw_category:
-                return None, None
-            category = self.sanitize_category(raw_category)
-
-        return suggested_name, category
+    def target_directory(self, path: Path, category: str, subcategory: str, organize: bool) -> Path:
+        return (
+            self.taxonomy.target_dir(self.root_folder, self.organize_folder_name, category, subcategory)
+            if organize else path.parent
+        )
 
     def build_plan(self, rename: bool = True, organize: bool = False) -> List[Dict[str, Any]]:
-        """Build a dry-run plan and record fingerprints for every approved source."""
+        """Build an approved-only v3 dry-run plan; queue ambiguous and duplicate inputs."""
         self.planned_actions = []
-        all_files = self.discover_files()
-        print(f"\nFound {len(all_files)} supported files")
+        files = self.discover_files()
+        print(f"\nFound {len(files)} supported files")
+        reserved = set()
 
-        reserved_targets = set()
-        organize_root = self.root_folder / self.organize_folder_name
-
-        for file_path in all_files:
-            print(f"\nAnalyzing: {file_path.name}")
+        for path in files:
+            print(f"\nAnalyzing: {path.name}")
             try:
-                fingerprint_before = self._file_fingerprint(file_path)
-            except (OSError, ValueError) as e:
-                print(f"  ⚠️  Skipped: could not safely inspect file ({e})")
-                continue
-
-            suggested_name, category = self.analyze_file(
-                file_path, rename=rename, organize=organize
-            )
-            if (rename and not suggested_name) or (organize and not category):
-                print("  ⚠️  Skipped: AI analysis failed or returned incomplete JSON")
-                continue
-
-            try:
-                fingerprint_after = self._file_fingerprint(file_path)
-            except (OSError, ValueError) as e:
-                print(f"  ⚠️  Skipped: file changed during analysis ({e})")
-                continue
-
-            if not self._fingerprint_matches(fingerprint_after, fingerprint_before):
-                print("  ⚠️  Skipped: file changed while the AI was analysing it")
-                continue
-
-            file_date = self.get_file_date_string(file_path)
-            target_dir = (organize_root / category) if organize else file_path.parent
-            if rename and suggested_name:
-                base_name = self.sanitize_filename(
-                    f"{suggested_name} ({file_date})", max_len=180
-                )
-                if not base_name:
-                    print("  ⚠️  Skipped: generated filename was empty after sanitization")
+                before = self._file_fingerprint(path)
+                duplicate = self.duplicate_of(path, before)
+                if duplicate:
+                    self.review_queue.add(path, f"Identical file already exists: {duplicate}", before)
+                    print(f"  ⚠️  Duplicate content: {duplicate}")
                     continue
-                target_name = f"{base_name}{file_path.suffix}"
-            else:
-                target_name = file_path.name
 
-            target_path = target_dir / target_name
-            counter = 1
-            while (
-                (target_path.exists() and target_path != file_path)
-                or os.path.normcase(str(target_path.resolve(strict=False))) in reserved_targets
-            ):
-                stem = Path(target_name).stem
-                target_path = target_dir / f"{stem} [{counter}]{file_path.suffix}"
-                counter += 1
+                details = self.suggest_file(path, rename=rename, organize=organize)
+                if not details:
+                    print(f"  ⚠️  Needs review: {path.name} (left untouched)")
+                    continue
 
-            reserved_targets.add(os.path.normcase(str(target_path.resolve(strict=False))))
-            if target_path.resolve(strict=False) == file_path.resolve():
-                print("  • No change needed")
-                continue
+                after = self._file_fingerprint(path)
+                if not self._fingerprint_matches(before, after):
+                    self.review_queue.add(path, "File changed during analysis.", after)
+                    continue
 
-            action = {
-                "old_path": str(file_path.resolve()),
-                "new_path": str(target_path.resolve(strict=False)),
-                "category": category if organize else "",
-                "source_fingerprint": fingerprint_before,
-            }
-            self.planned_actions.append(action)
-            rel_new = (
-                target_path.relative_to(self.root_folder)
-                if self.root_folder in target_path.parents
-                else target_path
-            )
-            print(f"  → Planned: {file_path.name}  ==>  {rel_new}")
+                target_dir = self.target_directory(
+                    path, details["category"], details["subcategory"], organize,
+                )
+                new_name = (
+                    self.format_target_name(details["filename"], path, details["category"])
+                    if rename else path.name
+                )
+                desired = target_dir / new_name
+                target = desired
+                counter = 1
+                while (
+                    (target.exists() and target != path)
+                    or os.path.normcase(str(target.resolve(strict=False))) in reserved
+                ):
+                    target = desired.with_name(f"{desired.stem} [{counter}]{desired.suffix}")
+                    counter += 1
+                reserved.add(os.path.normcase(str(target.resolve(strict=False))))
+                if target.resolve(strict=False) == path.resolve():
+                    continue
+
+                action = {
+                    "old_path": str(path.resolve()),
+                    "new_path": str(target.resolve(strict=False)),
+                    "category": details["category"],
+                    "subcategory": details["subcategory"],
+                    "reason": details["reason"],
+                    "source": details["source"],
+                    "source_fingerprint": before,
+                }
+                self._validate_plan_paths(action)
+                self.planned_actions.append(action)
+                self.review_queue.dismiss(str(path.resolve()))
+                print(f"  → Planned: {path.name} => {target.relative_to(self.root_folder)}")
+            except (OSError, ValueError) as exc:
+                self.review_queue.add(path, f"Processing failed: {exc}")
+                print(f"  ⚠️  Skipped: {exc}")
 
         return self.planned_actions
 
@@ -1035,6 +1138,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--api-key", help="API key (prefer env vars)")
     parser.add_argument("--rename", action="store_true", help="Rename files")
     parser.add_argument("--organize", action="store_true", help="Organize files into category folders")
+    parser.add_argument("--profile", choices=["simple", "smart", "custom"], help="Folder layout: smart uses up to two approved levels")
+    parser.add_argument("--naming-template", help="Filename template with {title}, {date}, {category}")
     parser.add_argument("--include-images", action="store_true", help="Include PNG/JPG/WEBP images via Vision LLM or OCR")
     parser.add_argument("--save-plan", metavar="PLAN_FILE", help="Save dry-run plan to a JSON file and exit")
     parser.add_argument("--apply-plan", metavar="PLAN_FILE", help="Apply a previously saved plan JSON file")
@@ -1065,6 +1170,10 @@ def main(argv: Optional[List[str]] = None):
         cfg["llm"]["api_key"] = args.api_key
     if args.include_images:
         cfg["organizer"]["enable_images"] = True
+    if args.profile:
+        cfg["organizer"]["profile"] = args.profile
+    if args.naming_template:
+        cfg["organizer"]["naming_template"] = args.naming_template
 
     if args.auto_apply and not args.watch:
         raise SystemExit("--auto-apply can only be used together with --watch.")

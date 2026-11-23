@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "offline-ai-file-organizer"
-version = "2.3.0"
+version = "3.0.0"
 description = "Privacy-first AI file renaming and organization with review, undo and watch folders."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -34,10 +34,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["streamlit>=1.35,<2"]
-ocr = ["Pillow>=10", "pytesseract>=0.3.10"]
+gui = ["streamlit>=1.35,<2", "Pillow>=10"]
+ocr = ["Pillow>=10", "pytesseract>=0.3.10", "PyMuPDF>=1.24", "xlrd>=2.0"]
 test = ["pytest>=8", "build>=1.2", "twine>=5"]
-all = ["streamlit>=1.35,<2", "Pillow>=10", "pytesseract>=0.3.10"]
+all = ["streamlit>=1.35,<2", "Pillow>=10", "pytesseract>=0.3.10", "PyMuPDF>=1.24", "xlrd>=2.0"]
 
 [project.scripts]
 offline-ai-organizer = "file_organizer:main"
@@ -48,7 +48,7 @@ Repository = "https://github.com/yousefebrahimi0/Offline-AI-File-Organizer"
 Issues = "https://github.com/yousefebrahimi0/Offline-AI-File-Organizer/issues"
 
 [tool.setuptools]
-py-modules = ["file_organizer", "watch_folder", "web_app", "ui_watch", "ui_helpers", "gui_launcher"]
+py-modules = ["file_organizer", "watch_folder", "web_app", "ui_watch", "ui_helpers", "gui_launcher", "smart_organizer", "document_intelligence"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
