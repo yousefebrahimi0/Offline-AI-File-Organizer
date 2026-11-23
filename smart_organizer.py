@@ -40,7 +40,7 @@ def safe_segment(text: str) -> bool:
         and text not in RESERVED
         and text.strip(" .") == text
         and not any(c in text for c in '<>:"/\\|?*\r\n\t')
-        and not (os.name == "nt" and text.upper().split(".")[0] in {
+        and not (text.upper().split(".")[0] in {
             "CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)],
             *[f"LPT{i}" for i in range(1, 10)],
         })
@@ -252,6 +252,12 @@ class DuplicateIndex:
                 return match
             self._files[digest] = file_key
             return None
+
+    def replace_path(self, source: Path, target: Path, digest: str) -> None:
+        """Keep the index accurate after an organizer-initiated move."""
+        with self.lock:
+            if self._files.get(digest) == str(source.resolve(strict=False)):
+                self._files[digest] = str(target.resolve(strict=False))
 
     def scan_organized(self, organized_root: Path, fingerprint, allowed_extensions) -> None:
         """Index previously organized files once so they can be skipped before AI calls."""

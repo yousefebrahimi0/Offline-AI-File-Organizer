@@ -567,10 +567,10 @@ class FileOrganizer:
         if require_source and not old_path.is_file():
             raise FileNotFoundError(f"Planned source file is missing: {old_path}")
         # Organizing may use a top category and one vetted subcategory, never deeper.
-        if action.get("category") and action.get("subcategory"):
+        if action.get("category"):
             allowed = self.taxonomy.target_dir(
                 self.root_folder, self.organize_folder_name,
-                action["category"], action["subcategory"],
+                action["category"], action.get("subcategory", ""),
             )
             if new_path.parent.resolve(strict=False) != allowed.resolve(strict=False):
                 raise ValueError("Plan destination violates approved folder depth.")
@@ -1070,6 +1070,9 @@ class FileOrganizer:
                 executed_action = dict(action)
                 executed_action["result_fingerprint"] = moved_fingerprint
                 self.executed_log.append(executed_action)
+                self.duplicate_index.replace_path(
+                    old_path, new_path, action["source_fingerprint"]["sha256"]
+                )
                 print(f"  ✓ Applied: {old_path.name}  ==>  {new_path.name}")
             except Exception as e:
                 print(f"  ✗ Error moving {old_path.name}: {e}")

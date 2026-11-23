@@ -316,6 +316,9 @@ class WatchFolderService:
             logged["new_path"] = str(target)
             logged["result_fingerprint"] = moved_fingerprint
             self._log_actions.append(logged)
+            self.organizer.duplicate_index.replace_path(
+                source, target, action["source_fingerprint"]["sha256"]
+            )
             self._stats["moved"] += 1
             with self._state_lock:
                 # Ignore this exact self-generated event version, but allow later edits.
