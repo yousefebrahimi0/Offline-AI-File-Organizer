@@ -12,6 +12,8 @@ Rename and categorize documents based on their contents using **local or cloud L
 
 > **Privacy:** With LM Studio, Ollama, or llama.cpp running locally, AI processing can stay on your computer. **Cloud models are optional, but choosing them sends analyzed file content to the configured provider.** The interface itself runs on localhost; this does not make a remote model private.
 
+**Smart Organization v3:** The default profile allows one approved subfolder beneath each category. You can also choose Simple (one level) or Custom (your own approved two-level taxonomy). The AI cannot invent arbitrary folder names. The UI includes a Needs Review queue and reusable sorting rules.
+
 ## What you can do
 
 | Feature | User benefit |
@@ -81,7 +83,7 @@ The dashboard also includes **Watch folder** and **History / undo** tabs.
 
 ## How categorization works today
 
-The organizer **recursively scans existing input subfolders**, but its **generated output taxonomy is flat**: a single category level under `Organized/`.
+The organizer recursively scans input subfolders. The **Smart** profile (default) creates only approved category/subcategory paths, such as `Finance/Invoices`. Select **Simple** for one category level or **Custom** to specify a two-level taxonomy.
 
 ```text
 Selected folder/
@@ -98,7 +100,7 @@ Selected folder/
     └── Miscellaneous/
 ```
 
-Only categories receiving files are created. These names can be customized in `config.yaml`. The app does **not yet** create nested structures such as `Finance/Invoices/2026` or invent unlimited new folders.
+Only categories receiving files are created. These names can be customized in `config.yaml`. Smart can create `Finance/Invoices`, but cannot create a third level such as `Finance/Invoices/2026` or unlimited folders.
 
 The AI returns one suggested category from the configured list. Unrecognized category names may fall back to `Miscellaneous`; this is **not a calibrated confidence score**.
 
@@ -227,3 +229,24 @@ Licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attributi
 Created by [Yousef Ebrahimi](https://github.com/yousefebrahimi0).
 
 **If this project saves you time, consider starring the repository.** ⭐
+
+
+## Smarter sorting in v3
+
+The dashboard now uses a **choose folder → choose Smart/Simple/Custom → review → apply** flow. Unknown classifications, missing model responses, and identical files are put in a persistent **Needs Review** list at `.organizer/review_queue.json` without moving or deleting them.
+
+**Saved rules** (editable from the dashboard or `config.yaml`) match filename globs and optional extracted text. Approved rules choose a category without an LLM request. For example:
+
+```yaml
+organizer:
+  rules:
+    - pattern: "*invoice*.pdf"
+      category: Finance
+      subcategory: Invoices
+```
+
+**Better extraction and image efficiency:** PDFs sample initial and final pages; scanned PDFs have optional local OCR using PyMuPDF + Tesseract; DOCX text extraction includes small tables. Image OCR is attempted before vision analysis, and Pillow produces resized, quality-controlled in-memory image payloads (default 1024 pixels). This normally reduces bytes transmitted, but provider billing/token savings depend on the provider. The original images are never modified.
+
+Install OCR dependencies with `python -m pip install -e ".[ocr]"` and install the Tesseract executable separately. No large OCR model is bundled. For installation with Python already available, use `setup_windows.bat` or `bash setup_macos_linux.sh`; these are **not standalone desktop installers**.
+
+Design references: [Image Description Toolkit](https://github.com/TheIdeaPlace/Image-Description-Toolkit), for a configurable batch-vision workflow, and [Awesome OCR LLM](https://github.com/yuliang-liu/awesome-ocr-llm), for research on document OCR. No code from either project has been copied.
