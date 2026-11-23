@@ -139,3 +139,128 @@ def test_universal_llm_auto_model_detection():
     assert ok is True
     assert client.model == "qwen2.5:7b"
     assert "qwen2.5:7b" in msg
+
+
+
+def test_ai_failure_does_not_plan_miscellaneous_move(tmp_path):
+    source = tmp_path / "unreadable.txt"
+    source.write_text("Important document", encoding="utf-8")
+    organizer = FileOrganizer(str(tmp_path), llm_client=FakeLLM([None]))
+    assert organizer.build_plan(rename=True, organize=True) == []
+    assert source.exists()
+    assert not (tmp_path / "Organized" / "Miscellaneous").exists()
+
+
+def test_saved_plan_rejects_changed_source_file(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    organizer.build_plan(rename=True, organize=True)
+    plan_file = tmp_path / "plan.json"
+    organizer.save_plan(str(plan_file))
+
+    source.write_text("Changed contents after approval", encoding="utf-8")
+    organizer2 = FileOrganizer(str(tmp_path), llm_client=FakeLLM([]))
+    organizer2.load_plan(str(plan_file))
+    with pytest.raises(ValueError, match="changed since the plan"):
+        organizer2.apply_plan()
+    assert source.read_text(encoding="utf-8") == "Changed contents after approval"
+
+
+def test_apply_plan_never_overwrites_existing_destination(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    plan = organizer.build_plan(rename=True, organize=True)
+    target = Path(plan[0]["new_path"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("User's newer file", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="Destination already exists"):
+        organizer.apply_plan()
+    assert source.read_text(encoding="utf-8") == "Original contents"
+    assert target.read_text(encoding="utf-8") == "User's newer file"
+
+
+def test_load_plan_rejects_path_outside_root(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    organizer.build_plan(rename=True, organize=True)
+    plan_file = tmp_path / "plan.json"
+    organizer.save_plan(str(plan_file))
+    plan_data = json.loads(plan_file.read_text(encoding="utf-8"))
+    plan_data["actions"][0]["new_path"] = str(tmp_path.parent / "outside.txt")
+    plan_file.write_text(json.dumps(plan_data), encoding="utf-8")
+
+    organizer2 = FileOrganizer(str(tmp_path), llm_client=FakeLLM([]))
+    with pytest.raises(ValueError, match="escapes the selected folder"):
+        organizer2.load_plan(str(plan_file))
+
+
+def test_undo_does_not_overwrite_recreated_original(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    plan = organizer.build_plan(rename=True, organize=True)
+    log_file = organizer.apply_plan(save_log=True)
+    target = Path(plan[0]["new_path"])
+    assert log_file and target.exists()
+    source.write_text("A different file created after the move", encoding="utf-8")
+
+    assert FileOrganizer.undo_from_log(str(log_file)) == 0
+    assert source.read_text(encoding="utf-8") == "A different file created after the move"
+    assert target.read_text(encoding="utf-8") == "Original contents"
+
+
+def test_undo_skips_file_modified_after_organization(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    plan = organizer.build_plan(rename=True, organize=True)
+    log_file = organizer.apply_plan(save_log=True)
+    target = Path(plan[0]["new_path"])
+    target.write_text("Edited after organization", encoding="utf-8")
+
+    assert FileOrganizer.undo_from_log(str(log_file)) == 0
+    assert target.read_text(encoding="utf-8") == "Edited after organization"
+    assert not source.exists()
+
+
+def test_load_plan_rejects_wrong_root_and_legacy_unsafe_plan(tmp_path):
+    source = tmp_path / "notes.txt"
+    source.write_text("Original contents", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Project Notes", "category": "Projects"}']),
+    )
+    organizer.build_plan(rename=True, organize=True)
+    plan_file = tmp_path / "plan.json"
+    organizer.save_plan(str(plan_file))
+
+    wrong_root = FileOrganizer(str(tmp_path.parent), llm_client=FakeLLM([]))
+    with pytest.raises(ValueError, match="different folder"):
+        wrong_root.load_plan(str(plan_file))
+
+    legacy_file = tmp_path / "legacy-plan.json"
+    legacy_file.write_text(
+        json.dumps({"version": 2, "root_folder": str(tmp_path), "actions": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Unsupported or unsafe plan format"):
+        organizer.load_plan(str(legacy_file))
