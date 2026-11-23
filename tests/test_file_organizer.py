@@ -396,3 +396,32 @@ def test_watch_mode_ignores_organized_and_unsupported_files(tmp_path):
     result = service.shutdown()
     assert result["stats"]["planned"] == 0
     assert result["plan_path"] is None
+
+
+
+def test_watch_mode_ignores_its_own_move_event_but_allows_later_edit(tmp_path):
+    from watch_folder import WatchFolderService
+
+    source = tmp_path / "incoming.txt"
+    source.write_text("A note to rename", encoding="utf-8")
+    organizer = FileOrganizer(
+        str(tmp_path),
+        llm_client=FakeLLM(['{"filename": "Renamed Note", "category": "Personal"}']),
+    )
+    service = WatchFolderService(
+        organizer, rename=True, organize=False, workers=1,
+        stability_seconds=0, poll_interval=0.01, auto_apply=True,
+    )
+    action = service._build_action(source)
+    assert action is not None
+    service._apply_action(action)
+
+    target = Path(action["new_path"])
+    assert target.exists()
+    assert service.submit(target) is False
+
+    target.write_text("User edited this renamed file", encoding="utf-8")
+    assert service.submit(target) is True
+    result = service.shutdown()
+    assert result["stats"]["events"] == 2
+    assert result["stats"]["moved"] == 1

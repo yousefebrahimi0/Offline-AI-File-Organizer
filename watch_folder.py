@@ -287,16 +287,29 @@ class WatchFolderService:
             if target == source or not self.organizer._path_is_within(target, self.root):
                 raise ValueError(f"Unsafe watch destination: {target}")
 
-            moved_fingerprint = self.organizer._move_no_overwrite(
-                source, target, expected_fingerprint=action["source_fingerprint"]
-            )
+            target_key = os.path.normcase(str(target.resolve()))
+            with self._state_lock:
+                self._self_moved_paths.add(target_key)
+            try:
+                moved_fingerprint = self.organizer._move_no_overwrite(
+                    source, target, expected_fingerprint=action["source_fingerprint"]
+                )
+            except Exception:
+                with self._state_lock:
+                    self._self_moved_paths.discard(target_key)
+                raise
+
             logged = dict(action)
             logged["new_path"] = str(target)
             logged["result_fingerprint"] = moved_fingerprint
             self._log_actions.append(logged)
             self._stats["moved"] += 1
             with self._state_lock:
-                self._self_moved_paths.add(os.path.normcase(str(target.resolve())))
+                # Ignore this exact self-generated event version, but allow later edits.
+                self._last_processed[target_key] = (
+                    moved_fingerprint["size"], moved_fingerprint["mtime_ns"]
+                )
+                self._self_moved_paths.discard(target_key)
             self._persist_log()
             print(f"  ✓ Automatically organized: {source.name}  ==>  {target.relative_to(self.root)}")
 
