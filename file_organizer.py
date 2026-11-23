@@ -1087,6 +1087,8 @@ def main(argv: Optional[List[str]] = None):
         """
     )
 
+    if args.watch and not args.folder:
+        raise SystemExit("Watch mode requires --folder PATH.")
     folder_path = args.folder or input("Enter the folder path to organize: ").strip('"')
     if not os.path.exists(folder_path):
         print("❌ Folder does not exist!")
@@ -1117,8 +1119,6 @@ def main(argv: Optional[List[str]] = None):
     print(f"✓ {msg}")
 
     if args.watch:
-        if not args.folder:
-            raise SystemExit("Watch mode requires --folder PATH.")
         from watch_folder import run_watch_mode
 
         watch_cfg = cfg["organizer"]

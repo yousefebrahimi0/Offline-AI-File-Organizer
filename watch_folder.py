@@ -50,6 +50,7 @@ class WatchFolderService:
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="file-organizer")
         self._state_lock = threading.RLock()
         self._apply_lock = threading.Lock()
+        self._plan_write_lock = threading.Lock()
         self._pending = set()
         self._dirty = set()
         self._last_seen = {}
@@ -233,18 +234,19 @@ class WatchFolderService:
             raise
 
     def _persist_plan(self) -> None:
-        with self._state_lock:
-            actions = list(self._plan_actions.values())
-        if actions:
-            self._atomic_write_json(
-                self.plan_path,
+        with self._plan_write_lock:
+            with self._state_lock:
+                actions = list(self._plan_actions.values())
+            if actions:
+                self._atomic_write_json(
+                    self.plan_path,
                 {
                     "version": 3,
                     "root_folder": str(self.root),
                     "timestamp": datetime.now().isoformat(),
                     "actions": actions,
-                },
-            )
+                    },
+                )
 
     def _persist_log(self) -> None:
         # Called while _apply_lock is held, or after all workers have stopped.
@@ -263,13 +265,17 @@ class WatchFolderService:
     def _record_suggestion(self, action: Dict[str, Any]) -> None:
         key = os.path.normcase(action["old_path"])
         with self._state_lock:
+            previous = self._plan_actions.get(key)
+            if previous:
+                previous_target = os.path.normcase(str(Path(previous["new_path"]).resolve(strict=False)))
+                self._reserved_targets.discard(previous_target)
             desired = Path(action["new_path"])
             target = self._choose_target(desired, Path(action["old_path"]))
             action = dict(action)
             action["new_path"] = str(target)
             self._reserved_targets.add(os.path.normcase(str(target.resolve(strict=False))))
             self._plan_actions[key] = action
-            self._stats["planned"] += 1
+            self._stats["planned"] = len(self._plan_actions)
         self._persist_plan()
         print(f"  → Review proposal: {Path(action['old_path']).name}  ==>  {target.relative_to(self.root)}")
 
@@ -289,7 +295,8 @@ class WatchFolderService:
             logged["result_fingerprint"] = moved_fingerprint
             self._log_actions.append(logged)
             self._stats["moved"] += 1
-            self._self_moved_paths.add(os.path.normcase(str(target.resolve())))
+            with self._state_lock:
+                self._self_moved_paths.add(os.path.normcase(str(target.resolve())))
             self._persist_log()
             print(f"  ✓ Automatically organized: {source.name}  ==>  {target.relative_to(self.root)}")
 
