@@ -327,7 +327,7 @@ def test_cache_can_be_disabled(tmp_path):
 
 def test_local_document_metadata_hints_and_filename(tmp_path):
     from document_intelligence import document_hints
-    text = "Supplier: ACME Tools\\nDate: 2026-11-22\\nInvoice no: 987X"
+    text = "Supplier: ACME Tools\nDate: 2026-11-22\nInvoice no: 987X"
     hints = document_hints(text)
     assert hints["document_date"] == "2026-11-22"
     assert hints["vendor"].startswith("ACME Tools")
