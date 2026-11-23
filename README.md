@@ -1,213 +1,229 @@
 # 🤖 Offline AI File Organizer
-> *I kept telling myself I'd organize my files "later." Days passed. Thousands of cryptic filenames piled up. I checked and reviewed some apps on Windows to rename and organize my files, but none of them were good enough. So one day I realized: why force discipline when I can automate intelligence using local LLMs? So I built this.*
 
-![Offline AI File Organizer Banner](banner.png)
+**Organize messy folders with AI—without giving up control of your files.**
 
-**Transform your messy file system into an organized masterpiece using any local or cloud LLM.**
+Rename and categorize documents based on their contents using **local or cloud LLMs**. Review suggestions before moving anything, monitor folders for new files, and undo previous moves. Available as a **local web dashboard** and a **command-line tool** for Windows, macOS, and Linux.
 
-Automatically rename and organize your documents (and optionally images) using AI that runs entirely on your machine—or connect any OpenAI-compatible, Anthropic, or Gemini model you prefer.
+![Offline AI File Organizer](banner.png)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/AI-Any%20Local%20or%20Cloud%20LLM-purple.svg" alt="Universal LLM">
-</p>
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
+[![Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
+![Local or cloud LLM](https://img.shields.io/badge/AI-Local%20or%20cloud-purple)
 
----
+> **Privacy:** With LM Studio, Ollama, or llama.cpp running locally, AI processing can stay on your computer. **Cloud models are optional, but choosing them sends analyzed file content to the configured provider.** The interface itself runs on localhost; this does not make a remote model private.
 
-## 🆕 Updates
+## What you can do
 
-### v2.3 — Local Web UI and Installable Package
-- **Optional Streamlit dashboard**: locally review, edit, approve and undo suggested changes without using the CLI.
-- **Live monitor controls**: start and stop review-only or explicitly authorized automatic watch sessions in the browser.
-- **Installable Python package**: command-line and local GUI launchers, optional OCR/UI dependencies, wheel and source distributions.
-- **Cross-platform CI**: Windows, macOS and Linux across multiple supported Python versions.
+| Feature | User benefit |
+| --- | --- |
+| **Smart renaming** | Turn cryptic filenames into readable names based on file content and modification month. |
+| **Simple categorization** | Route files to configurable category folders under one \`Organized/\` directory. |
+| **Review and approval** | Inspect, rename, re-categorize, or skip suggestions before applying them. |
+| **Watch-folder mode** | Analyse newly arriving files after they finish copying. Automatic moves are opt-in. |
+| **Parallel analysis** | Analyse several files concurrently using a configurable number of workers. |
+| **Undo and safety checks** | Saved plans, SHA-256 fingerprint verification, no-overwrite moves, and undo logs. |
+| **Choice of AI** | LM Studio, Ollama, llama.cpp, OpenAI, OpenRouter, Anthropic, Gemini, or compatible endpoints. |
+| **Local browser or CLI** | Use an interactive dashboard or automate tasks from a terminal. |
 
-### v2.1 — Safer File Operations
-- **Versioned plans**: New plans store source size, modification time and SHA-256 fingerprints and must match the selected root folder.
-- **No-overwrite execution**: Applying a plan preflights every action and refuses existing destinations, changed sources, symbolic links and paths outside the selected folder.
-- **Safer undo**: Undo refuses to overwrite recreated originals and skips files changed after organization. Keep the log in its original organization root folder.
-- **AI failure handling**: Files are skipped when the model fails or returns incomplete JSON instead of being filed under `Miscellaneous`.
-- **Plan compatibility**: Version 2 saved plans must be regenerated; version 2 organization logs can still be used for undo if kept in their original root folder.
+## Example: Before and after
 
-### v2.2 — Watch-Folder Mode & Parallel Analysis
-- **Watch folders**: Monitor a folder recursively for new or modified supported files with `watchdog`. Files must remain stable before analysis begins, so incomplete copies are not processed.
-- **Parallel analysis**: Configure a bounded worker pool for concurrent extraction and LLM requests. File moves are serialized to prevent destination collisions.
-- **Review-first by default**: Watch mode saves a version 3 approval plan and does not move files unless `--auto-apply` is explicitly supplied. Automatic moves are recorded in a standard undo log.
+\`\`\`text
+Before
+Downloads/
+├── a8d137cc.pdf
+├── document_final_3.docx
+└── receipt_019.jpg
 
-### v2.0 — Universal LLM Support, Plan Caching, Undo, & Expanded Formats
-- **Universal LLM Provider Layer**: No longer locked to LM Studio + Mistral-7B. Connect **LM Studio**, **Ollama**, **llama.cpp**, **OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**, or any custom OpenAI-compatible endpoint via `config.yaml` or CLI flags, with automatic local model detection (`model: "auto"`).
-- **Cached Dry-Run Plans & One-Click Undo**: Dry-run results are now cached so live mode applies the exact approved changes without calling the LLM twice. Added `--save-plan`, `--apply-plan`, and `--undo <log.json>` to safely reverse any batch.
-- **Expanded Format & Image Support**: Added built-in extractors for `.rtf`, `.odt`, and `.pptx`, migrated PDF parsing from deprecated `PyPDF2` to `pypdf` (with `None`-safe handling for scanned PDFs), and added optional image organization (`--include-images`) via Vision-Language Models (VLMs) or `pytesseract` OCR.
-- **Reliability & Security Fixes**: Automatically excludes `Organized/` and ignored folders from recursive scans, sanitizes AI-generated categories against an allowed list to prevent invalid paths, and combines naming + categorization into a single structured JSON prompt.
-- **Automated Testing (CI)**: Added a `pytest` unit test suite and GitHub Actions workflow.
+After (illustrative — depends on the AI model)
+Downloads/
+└── Organized/
+    ├── Finance/
+    │   └── Electricity Invoice (2026-11).pdf
+    ├── Projects/
+    │   └── Project Planning Notes (2026-11).docx
+    └── Photos/
+        └── Shop Receipt (2026-11).jpg
+\`\`\`
 
----
+The example uses optional image analysis. Categories and filenames are AI suggestions, not guaranteed classifications.
 
-## ✨ Features
+## Get started in three steps
 
-### 🎯 Intelligent Renaming
-- **AI-Powered Analysis**: Reads actual file content to generate meaningful names
-- **Smart Naming**: Transforms `8a095-4d0f6a90008b.pdf` → `My personal test on NY project (2025-03).pdf`
-- **Date Integration**: Automatically adds modification date (`YYYY-MM`) to filenames
-- **Duplicate Handling**: Safely manages duplicate names with incremental suffixes
-- **Multilingual**: Supports both English and Persian content
+**Requirements:** Python 3.9+ and either a local AI server such as [LM Studio](https://lmstudio.ai/) / [Ollama](https://ollama.com/), or API credentials for a supported cloud provider.
 
-### 📁 Smart Organization
-- **Content-Based Categorization**: AI analyzes documents and sorts them into relevant folders
-- **Customizable Categories**: Edit your folder taxonomy directly in `config.yaml`
-- **Ignore Rules**: Automatically skips `Organized/`, `.git/`, `node_modules/`, and virtual environments
-- **Recursive Processing**: Handles nested folders and subdirectories
+### 1. Install from the repository
 
-### 🔌 Universal LLM Support (Privacy-First)
-- **100% Offline by Default**: Works out of the box with **LM Studio**, **Ollama**, or **llama.cpp**
-- **Bring Your Own Model**: Switch to any local model (`auto`-detected) or cloud API (**OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**) in `config.yaml` or via CLI flags
-
-### 🛡️ Safety Features
-- **Exact Dry-Run Plan Caching**: Live mode executes the exact plan you reviewed, after validating the source files
-- **Save & Replay Plans**: Export a dry-run plan with `--save-plan plan.json` and apply later with `--apply-plan plan.json`
-- **One-Click Undo**: Reverse a run with `python file_organizer.py --undo <organization_log.json>`; existing files and post-run modifications are protected
-- **Non-Destructive**: Original files are moved/renamed, never deleted
-
----
-
-## 📋 Supported File Types
-
-- **Documents**: PDF, DOCX, TXT, MD, RTF, ODT, PPTX
-- **Spreadsheets**: CSV, XLSX, XLS
-- **E-books**: EPUB
-- **Images (Optional)**: PNG, JPG, JPEG, WEBP (enable via `config.yaml` or `--include-images` using a Vision LLM or `pytesseract` OCR)
-
----
-
-## 🖥️ Local web interface and package installation
-
-Install directly from this repository (no PyPI release required):
-
-```bash
+\`\`\`bash
+git clone https://github.com/yousefebrahimi0/Offline-AI-File-Organizer.git
+cd Offline-AI-File-Organizer
 python -m pip install -e ".[gui]"
+\`\`\`
+
+This installs the application and its optional Streamlit interface. It does **not** create a standalone Windows EXE or macOS APP.
+
+### 2. Open the local web dashboard
+
+\`\`\`bash
 offline-ai-organizer-gui
-```
+\`\`\`
 
-The GUI launches Streamlit on **127.0.0.1** (not a public server) and opens your browser; if needed, visit **http://127.0.0.1:8501** manually. It includes model settings, review/edit/skip proposals, checked application, watch controls and undo history. Cloud providers transmit file content to the selected provider; choose LM Studio or Ollama if you want local processing. API keys in GUI are not written to a plan/log.
+The app opens in a browser at **http://127.0.0.1:8501** by default, bound to your own computer.
 
-For the CLI-only installation:
+Select a folder, choose your AI provider/model, and click **Analyze folder**. With the default config, LM Studio is expected at \`http://localhost:1234/v1\`; to use Ollama, change the provider to \`ollama\` and run its local model server.
 
-```bash
+### 3. Review → approve → apply
+
+The app first builds suggestions **without moving files**. Review the proposed names and categories, edit anything you dislike, and uncheck files you want to leave untouched. Moving files requires explicit approval. Successfully moved files are recorded in an undo log.
+
+The dashboard also includes **Watch folder** and **History / undo** tabs.
+
+> Start with a folder of **copied test files**, especially before enabling automatic watch-folder moves.
+
+## How categorization works today
+
+The organizer **recursively scans existing input subfolders**, but its **generated output taxonomy is flat**: a single category level under \`Organized/\`.
+
+\`\`\`text
+Selected folder/
+└── Organized/
+    ├── Work/
+    ├── Personal/
+    ├── Finance/
+    ├── Medical/
+    ├── Education/
+    ├── Legal/
+    ├── Photos/
+    ├── Projects/
+    ├── Archive/
+    └── Miscellaneous/
+\`\`\`
+
+Only categories receiving files are created. These names can be customized in \`config.yaml\`. The app does **not yet** create nested structures such as \`Finance/Invoices/2026\` or invent unlimited new folders.
+
+The AI returns one suggested category from the configured list. Unrecognized category names may fall back to \`Miscellaneous\`; this is **not a calibrated confidence score**.
+
+## Local and cloud AI providers
+
+| Provider | Default use | Where content goes |
+| --- | --- | --- |
+| LM Studio | Local OpenAI-compatible server | Stays local when configured locally |
+| Ollama | Local model server | Stays local when configured locally |
+| llama.cpp | Local OpenAI-compatible server | Stays local when configured locally |
+| OpenAI / OpenRouter | Cloud API with key | Sent to cloud provider |
+| Anthropic / Gemini | Cloud API with key | Sent to cloud provider |
+| Custom OpenAI-compatible | User-supplied endpoint | Depends on endpoint |
+
+Configure providers in the dashboard, \`config.yaml\`, or CLI flags. Prefer environment variables (for example \`OPENAI_API_KEY\`) for cloud credentials; GUI-entered API keys are not saved in organization plans/logs.
+
+## CLI usage
+
+Install without the web interface:
+
+\`\`\`bash
 python -m pip install -e .
 offline-ai-organizer --help
-```
+\`\`\`
 
-Optional image OCR requires `python -m pip install -e ".[ocr]"` plus a separately installed Tesseract executable. Run the web interface on a trusted local machine only; do not expose its port on your network or the internet.
+**Save and apply an approved plan**
 
-## 🚀 Quick Start
+\`\`\`bash
+offline-ai-organizer --folder "./Downloads" --provider ollama --rename --organize --save-plan plan.json
+offline-ai-organizer --apply-plan plan.json
+\`\`\`
 
-### Prerequisites
-1. **Python 3.9+** - [Download here](https://www.python.org/downloads/)
-2. A local LLM runner such as **LM Studio** ([lmstudio.ai](https://lmstudio.ai/)) or **Ollama** ([ollama.com](https://ollama.com/)), **or** an API key for OpenAI / OpenRouter / Anthropic / Gemini.
+**Watch for new files (review-only by default)**
 
-### Installation
+\`\`\`bash
+offline-ai-organizer --folder "./Downloads" --watch --rename --organize --workers 3
+\`\`\`
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yousefebrahimi0/Offline-AI-File-Organizer.git
-   cd Offline-AI-File-Organizer
-   ```
+**Explicitly allow automatic moves**
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-![Screenshot One](screenshot1.png)
+\`\`\`bash
+offline-ai-organizer --folder "./Downloads" --watch --rename --organize --workers 3 --auto-apply
+\`\`\`
 
-3. **Configure your LLM (`config.yaml`)**
-   - For **LM Studio**: Start the local server (port `1234`) with any loaded model. `config.yaml` defaults to `provider: "lm_studio"` and `model: "auto"`.
-   - For **Ollama**: Set `provider: "ollama"` in `config.yaml` (or pass `--provider ollama`).
-   - For **Cloud / Custom APIs**: Set `provider` and `model` in `config.yaml` and export your API key (e.g., `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `LLM_API_KEY`).
+Use \`--stability-delay 3\` to require three seconds of unchanged size and modification time before analysis. Watch mode handles new file events; it does not bulk-scan all existing files at startup. Stop with **Ctrl+C**.
 
-![Screenshot Two](screenshot2.png)
+**Undo**
 
-### Usage
+\`\`\`bash
+offline-ai-organizer --undo "./Downloads/organization_log_YYYYMMDD_HHMMSS.json"
+\`\`\`
 
-#### Watch-folder mode
-```bash
-# Analyse new or changed files in parallel and save an approval plan.
-# Files are not moved until you review and apply the plan.
-python file_organizer.py --folder "./Downloads" --watch --rename --organize --workers 3
+Undo skips files that changed after a move and refuses to overwrite a file that now occupies the original path. Version 2 plans need regeneration; saved version 3 plans include source fingerprints.
 
-# Explicitly opt in to automatic moving; every successful move is logged for undo.
-python file_organizer.py --folder "./Downloads" --watch --rename --organize --workers 3 --auto-apply
-```
+## Supported files
 
-Stop the watcher with Ctrl+C. In review-only mode, a `watch_plan_*.json` file is written to the watched folder and can be applied later with `--apply-plan`. Automatic mode writes an `organization_log_watch_*.json` undo log.
+| Type | Extensions | Important notes |
+| --- | --- | --- |
+| Documents | PDF, DOCX, TXT, MD, RTF, ODT, PPTX | Extraction quality depends on format. PDF reads an initial text preview. |
+| Spreadsheets | CSV, XLSX, XLS | Legacy XLS may additionally require \`xlrd\`. |
+| E-books | EPUB | Metadata extraction, not full-book semantic indexing. |
+| Images (optional) | PNG, JPG, JPEG, WEBP | Vision LLM support or optional Tesseract OCR. |
 
-The stability delay defaults to 1.5 seconds and can be changed with `--stability-delay`. The worker count defaults to 2 and can be changed with `--workers`.
+Image analysis is disabled by default. Enable it in \`config.yaml\` or with \`--include-images\`. Optional OCR dependencies:
 
-#### Interactive Mode
-```bash
-python file_organizer.py
-```
+\`\`\`bash
+python -m pip install -e ".[ocr]"
+\`\`\`
 
-#### CLI Examples
-```bash
-# Organize with local Ollama (auto-detects loaded model)
-python file_organizer.py --folder "./Downloads" --provider ollama --rename --organize
+Tesseract itself must be installed separately. **Scanned PDF OCR is not yet built in.** Audio/video analysis and semantic search are also not implemented.
 
-# Include images using a local or cloud Vision model
-python file_organizer.py --folder "./Receipts" --provider ollama --model qwen2.5-vl --include-images --rename --organize
+## Configuration
 
-# Save a dry-run plan to review, then apply it later
-python file_organizer.py --folder "./Docs" --rename --organize --save-plan plan.json
-python file_organizer.py --apply-plan plan.json
+Edit [config.yaml](config.yaml) to select your LLM, adjust ignored folders, configure categories, and set watcher defaults. For example:
 
-# Undo a previous run
-python file_organizer.py --undo "./Downloads/organization_log_20261123_153000.json"
-```
-
----
-
-## ⚙️ Configuration (`config.yaml`)
-
-```yaml
+\`\`\`yaml
 llm:
-  provider: "lm_studio"   # lm_studio, ollama, llama_cpp, openai, openrouter, anthropic, gemini, openai_compatible
-  base_url: ""            # Optional custom endpoint
-  model: "auto"           # Auto-detect local model, or specify any model name
-  api_key: ""             # Prefer environment variables for cloud keys
-  temperature: 0.2
-  max_tokens: 120
-  timeout: 45
+  provider: "lm_studio"
+  model: "auto"
+  base_url: ""
+  api_key: ""
 
 organizer:
-  max_content_length: 3000
   organize_folder_name: "Organized"
   enable_images: false
-  use_vision_model: true
-  ignore_folders: ["Organized", ".git", "__pycache__", "node_modules", ".venv", "venv"]
-  categories: ["Work", "Personal", "Finance", "Medical", "Education", "Legal", "Photos", "Projects", "Archive", "Miscellaneous"]
-```
+  watch_workers: 2
+  watch_stability_seconds: 1.5
+  categories: [Work, Personal, Finance, Medical, Education, Legal, Photos, Projects, Archive, Miscellaneous]
+\`\`\`
 
----
+## Safety and limitations
 
-## 🧪 Running Tests
+- **Review first:** Regular GUI analysis and default watch mode create proposals rather than moving files automatically.
+- **No target overwrite:** Source fingerprints, root-bound plans, and collision checks protect against many accidental changes.
+- **Undo is conditional:** Files must remain unchanged and their previous locations must be available.
+- **Not a single transaction:** A batch can partially succeed if later moves fail; consult the execution log.
+- **AI can be wrong:** Review sensitive documents and category suggestions before applying changes.
+- **Local app ≠ local inference:** Remote cloud models can receive the file content analyzed by the program.
+- **Not yet a full file manager:** No arbitrary nested categories, content-based deduplication, semantic search, or standalone desktop installers.
 
-```bash
-pip install pytest
+## What could come next?
+
+These are **ideas, not current features**:
+
+- **Simpler default taxonomy:** A small number of everyday categories, with an \`Uncertain / Needs Review\` queue instead of filing weak guesses into \`Miscellaneous\`.
+- **Optional two-level organization profiles:** For example \`Finance/Invoices\` or \`Work/Projects\`, with maximum depth controlled by the user.
+- **Reusable rules and learning from corrections:** Remember user-approved category decisions and deterministic filename rules.
+- **Better document understanding:** Scanned PDF OCR, tables, dates, vendors, and invoice metadata.
+- **Desktop-quality distribution:** Optional one-click installers and packaged local-model setup.
+
+## Development and testing
+
+\`\`\`bash
+python -m pip install -e ".[test,gui]"
 python -m pytest -v
-```
+python -m build
+python -m twine check dist/*
+\`\`\`
 
----
+CI runs Python 3.9, 3.11, and 3.13 on Linux, macOS and Windows, plus packaging, CLI smoke testing, and a Streamlit render smoke test.
 
-## 📝 License & Attribution
-Licensed under the [Apache License 2.0](LICENSE).
+## License
 
-If you use this project in your work, software, or research, please include the attribution in the [NOTICE](NOTICE) file and credit:
-> Yousef Ebrahimi — https://github.com/yousefebrahimi0/Offline-AI-File-Organizer
+Licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
 
----
+Created by [Yousef Ebrahimi](https://github.com/yousefebrahimi0).
 
-<p align="center">Made for everyone tired of messy file systems</p>
-
-<p align="center">
-  <sub>⭐ Star this repo if it helped you organize your files!</sub>
-</p>
+**If this project saves you time, consider starring the repository.** ⭐
