@@ -279,3 +279,105 @@ def test_apply_and_undo_two_level_plan(tmp_path):
     assert log and log.exists()
     assert FileOrganizer.undo_from_log(str(log))==1
     assert source.exists()
+
+
+
+def test_cache_prevents_repeated_llm_calls_and_persists(tmp_path):
+    source = tmp_path / "project.txt"
+    source.write_text("A very interesting project idea", encoding="utf-8")
+    organizer = make_organizer(
+        tmp_path, '{"filename":"Project Idea","category":"Projects","subcategory":"Plans"}'
+    )
+    first = organizer.suggest_file(source)
+    second = organizer.suggest_file(source)
+    assert first["category"] == second["category"] == "Projects"
+    assert second["source"] == "cache"
+    assert organizer.llm.calls == 1
+
+    again = make_organizer(tmp_path)
+    cached = again.suggest_file(source)
+    assert cached["source"] == "cache"
+    assert again.llm.calls == 0
+    assert (tmp_path / ".organizer" / "analysis_cache.json").exists()
+
+
+def test_cache_invalidates_when_file_changes(tmp_path):
+    source = tmp_path / "note.txt"
+    source.write_text("First contents", encoding="utf-8")
+    organizer = make_organizer(
+        tmp_path, '{"filename":"Note","category":"Personal","subcategory":""}'
+    )
+    organizer.suggest_file(source)
+    source.write_text("Updated contents", encoding="utf-8")
+    organizer.suggest_file(source)
+    assert organizer.llm.calls == 2
+
+
+def test_cache_can_be_disabled(tmp_path):
+    source = tmp_path / "note.txt"
+    source.write_text("Contents", encoding="utf-8")
+    organizer = make_organizer(
+        tmp_path, '{"filename":"Note","category":"Personal","subcategory":""}',
+        {"cache_ai_results": False}
+    )
+    organizer.suggest_file(source)
+    organizer.suggest_file(source)
+    assert organizer.llm.calls == 2
+
+
+def test_local_document_metadata_hints_and_filename(tmp_path):
+    from document_intelligence import document_hints
+    text = "Supplier: ACME Tools\\nDate: 2026-11-22\\nInvoice no: 987X"
+    hints = document_hints(text)
+    assert hints["document_date"] == "2026-11-22"
+    assert hints["vendor"].startswith("ACME Tools")
+    organizer = make_organizer(
+        tmp_path, overrides={"naming_template":"{document_date} - {vendor} - {title}"}
+    )
+    source = tmp_path / "invoice.txt"
+    source.write_text("Invoice")
+    assert organizer.format_target_name("Invoice",source,"Finance",**{
+        "document_date":hints["document_date"],"vendor":hints["vendor"]
+    }) == "2026-11-22 - ACME Tools - Invoice.txt"
+
+
+def test_manual_review_action_is_safe_and_undoable(tmp_path):
+    from ui_helpers import manual_review_action
+    source = tmp_path / "uncertain.txt"
+    source.write_text("A private document", encoding="utf-8")
+    organizer = make_organizer(tmp_path)
+    fingerprint = organizer._file_fingerprint(source)
+    queued = {"path":str(source), "sha256":fingerprint["sha256"]}
+    action = manual_review_action(organizer,queued,"Reviewed.txt","Personal","Legal")
+    assert action["source"] == "manual"
+    organizer.planned_actions=[action]
+    log=organizer.apply_plan(save_log=True)
+    assert Path(action["new_path"]).exists()
+    assert log and log.exists()
+    assert FileOrganizer.undo_from_log(str(log))==1
+    assert source.exists()
+
+
+def test_manual_review_refuses_changed_queue_item(tmp_path):
+    from ui_helpers import manual_review_action
+    source = tmp_path / "uncertain.txt"
+    source.write_text("Original", encoding="utf-8")
+    organizer = make_organizer(tmp_path)
+    old_fingerprint = organizer._file_fingerprint(source)
+    source.write_text("Changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="has changed"):
+        manual_review_action(
+            organizer,{"path":str(source),"sha256":old_fingerprint["sha256"]},
+            "New.txt","Personal",""
+        )
+
+
+def test_no_ai_miscellaneous_fallback_for_uncertain_results(tmp_path):
+    source = tmp_path / "mystery.txt"
+    source.write_text("Hard to identify", encoding="utf-8")
+    organizer = make_organizer(
+        tmp_path, '{"filename":"Mystery","category":"Miscellaneous","subcategory":""}'
+    )
+    assert organizer.build_plan(rename=True,organize=True)==[]
+    assert source.exists()
+    assert len(organizer.review_queue.items())==1

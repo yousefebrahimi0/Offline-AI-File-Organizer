@@ -76,3 +76,51 @@ def select_reviewed_actions(
 def preflight_review(organizer, actions: List[Dict[str, Any]]) -> None:
     organizer.planned_actions = list(actions)
     organizer._preflight_plan()
+
+
+
+def manual_review_action(
+    organizer, queued: Mapping[str, Any], filename: str,
+    category: str, subcategory: str = ""
+) -> Dict[str, Any]:
+    """Create a fingerprinted, explicitly authorized action for a queued file."""
+    source_value = queued.get("path", "")
+    if not isinstance(source_value, str):
+        raise ValueError("Queued path is invalid.")
+    source = Path(source_value)
+    if (
+        not source.is_absolute()
+        or source.is_symlink()
+        or not source.is_file()
+        or not organizer._path_is_within(source, organizer.root_folder)
+    ):
+        raise ValueError("Queued source is missing or outside the selected folder.")
+
+    fingerprint = organizer._file_fingerprint(source)
+    if queued.get("sha256") and fingerprint["sha256"] != queued["sha256"]:
+        raise ValueError("Queued source has changed; analyze it again before moving.")
+
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or "/" in filename or "\\" in filename
+        or filename != Path(filename).name
+        or filename != organizer.sanitize_filename(filename, max_len=255)
+        or not filename.lower().endswith(source.suffix.lower())
+    ):
+        raise ValueError("Reviewed filename is unsafe or changes the extension.")
+
+    folder = organizer.taxonomy.target_dir(
+        organizer.root_folder, organizer.organize_folder_name, category, subcategory
+    )
+    action = {
+        "old_path": str(source.resolve()),
+        "new_path": str((folder / filename).resolve(strict=False)),
+        "category": organizer.taxonomy.category(category),
+        "subcategory": organizer.taxonomy.subcategory(category, subcategory),
+        "reason": "Manually reviewed and approved",
+        "source": "manual",
+        "source_fingerprint": fingerprint,
+    }
+    organizer._validate_plan_paths(action, require_source=True)
+    return action

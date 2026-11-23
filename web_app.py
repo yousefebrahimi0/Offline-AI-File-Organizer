@@ -9,7 +9,7 @@ from pathlib import Path
 
 from file_organizer import FileOrganizer, PROVIDER_DEFAULTS, load_config
 from smart_organizer import Taxonomy
-from ui_helpers import preflight_review, review_rows, select_reviewed_actions
+from ui_helpers import manual_review_action, preflight_review, review_rows, select_reviewed_actions
 
 
 def render():
@@ -240,9 +240,46 @@ def render():
                 if items:
                     st.dataframe(items, hide_index=True, use_container_width=True)
                     selected = st.selectbox(
-                        "Dismiss a reviewed item", [item["path"] for item in items]
+                        "File to review", [item["path"] for item in items]
                     )
-                    if st.button("Dismiss from queue"):
+                    queued = next(item for item in items if item["path"] == selected)
+                    st.caption(f"Reason: {queued.get('reason', 'Unknown')}")
+                    st.write("**Resolve manually** — approve a name and folder without AI")
+                    filename = st.text_input("Reviewed filename", value=Path(selected).name)
+                    chosen_root = st.selectbox("Move into category", organizer.categories)
+                    chosen_sub = st.selectbox(
+                        "Approved subfolder",
+                        [""] + organizer.taxonomy.subcategories.get(chosen_root, []),
+                    )
+                    remember = st.checkbox(
+                        "Remember this classification as a rule (optional)"
+                    )
+                    pattern = st.text_input(
+                        "Matching filename pattern for future files",
+                        value=Path(selected).name, disabled=not remember,
+                        help="Use a narrow pattern to avoid sorting unrelated documents.",
+                    )
+                    authorized = st.checkbox(
+                        "I reviewed this file and approve moving it to this folder."
+                    )
+                    if st.button("Move reviewed file", disabled=not authorized):
+                        action = manual_review_action(
+                            organizer, queued, filename, chosen_root, chosen_sub
+                        )
+                        organizer.planned_actions = [action]
+                        log = organizer.apply_plan(save_log=True)
+                        if len(organizer.executed_log) == 1:
+                            organizer.review_queue.dismiss(selected)
+                            if remember:
+                                organizer.rulebook.add({
+                                    "pattern": pattern,
+                                    "category": chosen_root,
+                                    "subcategory": chosen_sub,
+                                })
+                            st.success(f"Moved safely. Undo log: {log}")
+                        else:
+                            st.error("The file was not moved; check for a destination conflict.")
+                    if st.button("Dismiss from queue without moving"):
                         organizer.review_queue.dismiss(selected)
                         st.success("Dismissed. Original file was not changed.")
                 else:
