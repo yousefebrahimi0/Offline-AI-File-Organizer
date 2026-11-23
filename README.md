@@ -266,9 +266,11 @@ Contributions are welcome! Here's how you can help:
 
 ---
 
-## 📝 License
+## 📝 License & Attribution
+Licensed under the [Apache License 2.0](LICENSE).
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+If you use this project in your work, software, or research, please include the attribution in the [NOTICE](NOTICE) file and credit:
+> Yousef Ebrahimi — https://github.com/[your-username]/[repo-name]
 
 ---
 
