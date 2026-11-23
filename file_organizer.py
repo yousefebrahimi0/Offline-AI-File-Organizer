@@ -486,12 +486,16 @@ class FileOrganizer:
                 shutil.copystat(source, target, follow_symlinks=False)
                 target_fingerprint = FileOrganizer._file_fingerprint(target)
 
-                # Last check immediately before unlinking the source.
+                # Confirm the source has not changed while its handle was open.
                 final_source = source.stat()
                 if identity(after_fd) != identity(final_source):
                     raise ValueError(f"Source changed before it could be removed: {source}")
-                source.unlink()
 
+            # Windows refuses unlinking a file while this process still has
+            # its source handle open. Close it before the final identity check.
+            if identity(after_fd) != identity(source.stat()):
+                raise ValueError(f"Source changed before it could be removed: {source}")
+            source.unlink()
             return target_fingerprint
         except Exception:
             if created_target:
