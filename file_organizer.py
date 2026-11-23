@@ -6,6 +6,7 @@ to intelligently rename and organize documents and optional images with dry-run 
 
 import argparse
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -386,7 +387,187 @@ class FileOrganizer:
             )
 
         self.planned_actions: List[Dict[str, str]] = []
-        self.executed_log: List[Dict[str, str]] = []
+
+        self.executed_log: List[Dict[str, Any]] = []
+
+    @staticmethod
+    def _path_is_within(path: Path, root: Path) -> bool:
+        """Return True only when the resolved path stays inside root."""
+        try:
+            Path(path).resolve(strict=False).relative_to(Path(root).resolve(strict=False))
+            return True
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
+    def _file_fingerprint(file_path: Path) -> Dict[str, Any]:
+        """Capture content and metadata, rejecting files that change while read."""
+        if file_path.is_symlink() or not file_path.is_file():
+            raise ValueError(f"Not a regular file: {file_path}")
+        before = file_path.stat()
+        digest = hashlib.sha256()
+        with file_path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+            after_open = os.fstat(stream.fileno())
+        after = file_path.stat()
+
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+        if identity(before) != identity(opened) or identity(opened) != identity(after_open) or identity(after_open) != identity(after):
+            raise ValueError(f"File changed while being fingerprinted: {file_path}")
+
+        return {
+            "size": after.st_size,
+            "mtime_ns": after.st_mtime_ns,
+            "sha256": digest.hexdigest(),
+        }
+
+    @staticmethod
+    def _fingerprint_matches(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+        """Compare every field stored in a version 3 plan/log."""
+        return (
+            isinstance(expected, dict)
+            and actual.get("size") == expected.get("size")
+            and actual.get("mtime_ns") == expected.get("mtime_ns")
+            and actual.get("sha256") == expected.get("sha256")
+        )
+
+    @staticmethod
+    def _move_no_overwrite(
+        source: Path,
+        target: Path,
+        expected_fingerprint: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Move a regular file without replacing an existing destination.
+        Exclusive target creation prevents overwrite races and also supports
+        moves across filesystems. If anything fails before source removal,
+        the source remains intact and the partial target is removed.
+        """
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"Source is not a regular file: {source}")
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"Destination already exists: {target}")
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        created_target = False
+        digest = hashlib.sha256()
+
+        try:
+            with source.open("rb") as source_stream:
+                before_fd = os.fstat(source_stream.fileno())
+                with target.open("xb") as target_stream:
+                    created_target = True
+                    for chunk in iter(lambda: source_stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        target_stream.write(chunk)
+                    target_stream.flush()
+                    os.fsync(target_stream.fileno())
+
+                after_fd = os.fstat(source_stream.fileno())
+                current_source = source.stat()
+
+                def identity(info):
+                    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+                if identity(before_fd) != identity(after_fd) or identity(after_fd) != identity(current_source):
+                    raise ValueError(f"Source changed while it was being moved: {source}")
+
+                if expected_fingerprint:
+                    if (
+                        after_fd.st_size != expected_fingerprint.get("size")
+                        or digest.hexdigest() != expected_fingerprint.get("sha256")
+                    ):
+                        raise ValueError(f"File contents no longer match the approved plan: {source}")
+
+                shutil.copystat(source, target, follow_symlinks=False)
+                target_fingerprint = FileOrganizer._file_fingerprint(target)
+
+                # Last check immediately before unlinking the source.
+                final_source = source.stat()
+                if identity(after_fd) != identity(final_source):
+                    raise ValueError(f"Source changed before it could be removed: {source}")
+                source.unlink()
+
+            return target_fingerprint
+        except Exception:
+            if created_target:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+
+    def _validate_plan_paths(
+        self, action: Dict[str, Any], require_source: bool = False
+    ) -> Tuple[Path, Path]:
+        """Validate both paths against the selected root before file operations."""
+        if not isinstance(action, dict):
+            raise ValueError("Plan action must be a JSON object.")
+
+        old_value, new_value = action.get("old_path"), action.get("new_path")
+        if not isinstance(old_value, str) or not isinstance(new_value, str):
+            raise ValueError("Plan action is missing old_path or new_path.")
+
+        old_path, new_path = Path(old_value), Path(new_value)
+        if not old_path.is_absolute() or not new_path.is_absolute():
+            raise ValueError("Plan paths must be absolute.")
+        if old_path.is_symlink() or new_path.is_symlink():
+            raise ValueError("Symbolic-link paths are not allowed in plans.")
+        if not self._path_is_within(old_path, self.root_folder):
+            raise ValueError(f"Source path escapes the selected folder: {old_path}")
+        if not self._path_is_within(new_path, self.root_folder):
+            raise ValueError(f"Destination path escapes the selected folder: {new_path}")
+        if old_path.resolve(strict=False) == self.root_folder or new_path.resolve(strict=False) == self.root_folder:
+            raise ValueError("A plan cannot use the selected root folder as a file path.")
+        if require_source and not old_path.is_file():
+            raise FileNotFoundError(f"Planned source file is missing: {old_path}")
+        return old_path, new_path
+
+    def _preflight_plan(self) -> List[Tuple[Dict[str, Any], Path, Path]]:
+        """Validate every action before changing any file."""
+        if not self.root_folder.is_dir():
+            raise NotADirectoryError(f"Selected folder does not exist: {self.root_folder}")
+
+        validated = []
+        seen_sources, seen_targets = set(), set()
+        for action in self.planned_actions:
+            old_path, new_path = self._validate_plan_paths(action, require_source=True)
+            source_key = os.path.normcase(str(old_path.resolve()))
+            target_key = os.path.normcase(str(new_path.resolve(strict=False)))
+
+            if source_key in seen_sources:
+                raise ValueError(f"Plan contains the same source more than once: {old_path}")
+            if target_key in seen_targets:
+                raise ValueError(f"Plan contains duplicate destinations: {new_path}")
+            if source_key == target_key:
+                raise ValueError(f"Plan contains a no-op action: {old_path}")
+            if new_path.exists() or new_path.is_symlink():
+                raise FileExistsError(f"Destination already exists: {new_path}")
+            if not self._path_is_within(new_path.parent, self.root_folder):
+                raise ValueError(f"Destination directory escapes the selected folder: {new_path.parent}")
+
+            expected = action.get("source_fingerprint")
+            if (
+                not isinstance(expected, dict)
+                or not isinstance(expected.get("size"), int)
+                or not isinstance(expected.get("mtime_ns"), int)
+                or not isinstance(expected.get("sha256"), str)
+                or len(expected["sha256"]) != 64
+            ):
+                raise ValueError(f"Plan has no valid source fingerprint: {old_path}")
+
+            actual = self._file_fingerprint(old_path)
+            if not self._fingerprint_matches(actual, expected):
+                raise ValueError(f"Source file changed since the plan was created: {old_path}")
+
+            seen_sources.add(source_key)
+            seen_targets.add(target_key)
+            validated.append((action, old_path, new_path))
+        return validated
 
     def _active_extensions(self) -> set:
         if self.enable_images:
@@ -408,6 +589,8 @@ class FileOrganizer:
         for file_path in sorted(self.root_folder.rglob("*")):
             if (
                 file_path.is_file()
+                and not file_path.is_symlink()
+                and self._path_is_within(file_path, self.root_folder)
                 and file_path.suffix.lower() in allowed
                 and not self._is_ignored(file_path)
             ):
@@ -546,8 +729,8 @@ class FileOrganizer:
 
     def analyze_file(
         self, file_path: Path, rename: bool = True, organize: bool = True
-    ) -> Tuple[Optional[str], str]:
-        """Single-call structured JSON analysis for both filename and category."""
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Analyse one file; return missing values when the response is unusable."""
         content = self.extract_text_content(file_path)
         file_date = self.get_file_date_string(file_path)
         categories_str = ", ".join(self.categories)
@@ -570,21 +753,32 @@ Content preview:
         image_arg = file_path if (is_image and self.use_vision_model) else None
         raw = self.llm.chat(prompt, image_path=image_arg)
         if not raw:
-            return None, "Miscellaneous"
+            return None, None
 
         parsed = self._parse_json_response(raw)
+        if not parsed:
+            return None, None
+
         suggested_name = None
-        if rename and parsed.get("filename"):
-            suggested_name = self.sanitize_filename(parsed["filename"], max_len=60)
-        category = (
-            self.sanitize_category(parsed.get("category", "Miscellaneous"))
-            if organize
-            else "Miscellaneous"
-        )
+        if rename:
+            raw_name = parsed.get("filename", "").strip()
+            if not raw_name:
+                return None, None
+            suggested_name = self.sanitize_filename(raw_name, max_len=60)
+            if not suggested_name:
+                return None, None
+
+        category = None
+        if organize:
+            raw_category = parsed.get("category", "").strip()
+            if not raw_category:
+                return None, None
+            category = self.sanitize_category(raw_category)
+
         return suggested_name, category
 
-    def build_plan(self, rename: bool = True, organize: bool = False) -> List[Dict[str, str]]:
-        """Run dry-run analysis once and cache the exact planned operations."""
+    def build_plan(self, rename: bool = True, organize: bool = False) -> List[Dict[str, Any]]:
+        """Build a dry-run plan and record fingerprints for every approved source."""
         self.planned_actions = []
         all_files = self.discover_files()
         print(f"\nFound {len(all_files)} supported files")
@@ -594,14 +788,38 @@ Content preview:
 
         for file_path in all_files:
             print(f"\nAnalyzing: {file_path.name}")
-            file_date = self.get_file_date_string(file_path)
+            try:
+                fingerprint_before = self._file_fingerprint(file_path)
+            except (OSError, ValueError) as e:
+                print(f"  ⚠️  Skipped: could not safely inspect file ({e})")
+                continue
+
             suggested_name, category = self.analyze_file(
                 file_path, rename=rename, organize=organize
             )
+            if (rename and not suggested_name) or (organize and not category):
+                print("  ⚠️  Skipped: AI analysis failed or returned incomplete JSON")
+                continue
 
+            try:
+                fingerprint_after = self._file_fingerprint(file_path)
+            except (OSError, ValueError) as e:
+                print(f"  ⚠️  Skipped: file changed during analysis ({e})")
+                continue
+
+            if not self._fingerprint_matches(fingerprint_after, fingerprint_before):
+                print("  ⚠️  Skipped: file changed while the AI was analysing it")
+                continue
+
+            file_date = self.get_file_date_string(file_path)
             target_dir = (organize_root / category) if organize else file_path.parent
             if rename and suggested_name:
-                base_name = self.sanitize_filename(f"{suggested_name} ({file_date})", max_len=180)
+                base_name = self.sanitize_filename(
+                    f"{suggested_name} ({file_date})", max_len=180
+                )
+                if not base_name:
+                    print("  ⚠️  Skipped: generated filename was empty after sanitization")
+                    continue
                 target_name = f"{base_name}{file_path.suffix}"
             else:
                 target_name = file_path.name
@@ -610,22 +828,22 @@ Content preview:
             counter = 1
             while (
                 (target_path.exists() and target_path != file_path)
-                or str(target_path) in reserved_targets
+                or os.path.normcase(str(target_path.resolve(strict=False))) in reserved_targets
             ):
                 stem = Path(target_name).stem
                 target_path = target_dir / f"{stem} [{counter}]{file_path.suffix}"
                 counter += 1
 
-            reserved_targets.add(str(target_path))
-
-            if target_path == file_path:
+            reserved_targets.add(os.path.normcase(str(target_path.resolve(strict=False))))
+            if target_path.resolve(strict=False) == file_path.resolve():
                 print("  • No change needed")
                 continue
 
             action = {
-                "old_path": str(file_path),
-                "new_path": str(target_path),
+                "old_path": str(file_path.resolve()),
+                "new_path": str(target_path.resolve(strict=False)),
                 "category": category if organize else "",
+                "source_fingerprint": fingerprint_before,
             }
             self.planned_actions.append(action)
             rel_new = (
@@ -638,12 +856,12 @@ Content preview:
         return self.planned_actions
 
     def save_plan(self, plan_file_path: str) -> Path:
-        """Save the dry-run plan to JSON for later review or execution."""
+        """Save a versioned dry-run plan with source fingerprints."""
         path = Path(plan_file_path)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "version": 2,
+                    "version": 3,
                     "root_folder": str(self.root_folder),
                     "timestamp": datetime.now().isoformat(),
                     "actions": self.planned_actions,
@@ -655,26 +873,53 @@ Content preview:
         print(f"\n✓ Plan saved to: {path}")
         return path
 
-    def load_plan(self, plan_file_path: str) -> List[Dict[str, str]]:
-        """Load a previously saved dry-run plan JSON."""
+    def load_plan(self, plan_file_path: str) -> List[Dict[str, Any]]:
+        """Load and validate a version 3 plan for this exact root folder."""
         with open(plan_file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        self.planned_actions = data.get("actions", [])
+
+        if not isinstance(data, dict) or data.get("version") != 3:
+            raise ValueError(
+                "Unsupported or unsafe plan format. Re-create the dry-run plan with this version."
+            )
+        plan_root = Path(data.get("root_folder", "")).resolve(strict=False)
+        if plan_root != self.root_folder:
+            raise ValueError(
+                f"Plan belongs to a different folder ({plan_root}); selected folder is {self.root_folder}."
+            )
+
+        actions = data.get("actions")
+        if not isinstance(actions, list):
+            raise ValueError("Plan actions must be a JSON array.")
+        for action in actions:
+            self._validate_plan_paths(action, require_source=False)
+            fingerprint = action.get("source_fingerprint")
+            if (
+                not isinstance(fingerprint, dict)
+                or not isinstance(fingerprint.get("size"), int)
+                or not isinstance(fingerprint.get("mtime_ns"), int)
+                or not isinstance(fingerprint.get("sha256"), str)
+                or len(fingerprint["sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in fingerprint["sha256"].lower())
+            ):
+                raise ValueError("Plan contains a missing or invalid source fingerprint.")
+
+        self.planned_actions = actions
         return self.planned_actions
 
     def apply_plan(self, save_log: bool = True) -> Optional[Path]:
-        """Execute the exact cached plan from build_plan() without re-querying the LLM."""
+        """Preflight the whole plan, then move files without overwriting targets."""
+        validated = self._preflight_plan()
         self.executed_log = []
-        for action in self.planned_actions:
-            old_path = Path(action["old_path"])
-            new_path = Path(action["new_path"])
-            if not old_path.exists():
-                print(f"  ⚠️  Skipped missing file: {old_path}")
-                continue
+
+        for action, old_path, new_path in validated:
             try:
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(old_path), str(new_path))
-                self.executed_log.append(action)
+                moved_fingerprint = self._move_no_overwrite(
+                    old_path, new_path, expected_fingerprint=action["source_fingerprint"]
+                )
+                executed_action = dict(action)
+                executed_action["result_fingerprint"] = moved_fingerprint
+                self.executed_log.append(executed_action)
                 print(f"  ✓ Applied: {old_path.name}  ==>  {new_path.name}")
             except Exception as e:
                 print(f"  ✗ Error moving {old_path.name}: {e}")
@@ -682,12 +927,13 @@ Content preview:
         if save_log and self.executed_log:
             log_file = (
                 self.root_folder
-                / f"organization_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                / f"organization_log_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
             )
             with open(log_file, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "version": 2,
+                        "version": 3,
+                        "root_folder": str(self.root_folder),
                         "timestamp": datetime.now().isoformat(),
                         "actions": self.executed_log,
                     },
@@ -701,25 +947,74 @@ Content preview:
 
     @staticmethod
     def undo_from_log(log_file_path: str) -> int:
-        """Revert all renames and moves recorded in an organization_log_*.json file."""
-        log_path = Path(log_file_path)
-        if not log_path.exists():
+        """Undo safely; never overwrite originals or modified organized files."""
+        log_path = Path(log_file_path).resolve(strict=False)
+        if not log_path.is_file():
             print(f"❌ Log file not found: {log_path}")
             return 0
 
-        with open(log_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"❌ Could not read undo log: {e}")
+            return 0
+
+        if not isinstance(data, dict) or data.get("version") not in (2, 3):
+            print("❌ Unsupported undo log format.")
+            return 0
+
+        root_value = data.get("root_folder") or str(log_path.parent)
+        root_folder = Path(root_value).resolve(strict=False)
+        if log_path.parent != root_folder:
+            print("❌ Undo log must remain in the organization root folder.")
+            return 0
 
         actions = data.get("actions", [])
+        if not isinstance(actions, list):
+            print("❌ Undo log actions must be a JSON array.")
+            return 0
+
         reverted = 0
         for action in reversed(actions):
-            old_path = Path(action["old_path"])
-            new_path = Path(action["new_path"])
-            if new_path.exists():
-                old_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(new_path), str(old_path))
+            try:
+                if not isinstance(action, dict):
+                    raise ValueError("Invalid action in undo log.")
+                old_value, new_value = action.get("old_path"), action.get("new_path")
+                if not isinstance(old_value, str) or not isinstance(new_value, str):
+                    raise ValueError("Undo action is missing a source or destination path.")
+                old_path, new_path = Path(old_value), Path(new_value)
+
+                if not old_path.is_absolute() or not new_path.is_absolute():
+                    raise ValueError("Undo log paths must be absolute.")
+                if old_path.is_symlink() or new_path.is_symlink():
+                    raise ValueError("Symbolic-link paths are not allowed in undo logs.")
+                if not FileOrganizer._path_is_within(old_path, root_folder):
+                    raise ValueError(f"Original path escapes the organization root: {old_path}")
+                if not FileOrganizer._path_is_within(new_path, root_folder):
+                    raise ValueError(f"Organized path escapes the organization root: {new_path}")
+                if old_path.exists() or old_path.is_symlink():
+                    print(f"  ⚠️  Conflict; original path already exists, not overwritten: {old_path}")
+                    continue
+                if not new_path.is_file():
+                    print(f"  ⚠️  Organized file is missing; cannot restore: {new_path}")
+                    continue
+
+                expected = action.get("result_fingerprint") or action.get("source_fingerprint")
+                if expected:
+                    actual = FileOrganizer._file_fingerprint(new_path)
+                    if not FileOrganizer._fingerprint_matches(actual, expected):
+                        print(f"  ⚠️  File was modified after organization; not restored: {new_path}")
+                        continue
+
+                FileOrganizer._move_no_overwrite(
+                    new_path, old_path, expected_fingerprint=expected
+                )
                 reverted += 1
                 print(f"  ↩ Restored: {new_path.name}  ==>  {old_path}")
+            except Exception as e:
+                print(f"  ✗ Could not undo action: {e}")
+
         print(f"\n✅ Undo complete: restored {reverted} file(s).")
         return reverted
 

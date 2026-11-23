@@ -17,7 +17,7 @@ Automatically rename and organize your documents (and optionally images) using A
 
 ## 🆕 Updates
 
-### v2.0 — Universal LLM Support, Plan Caching, Undo, & Expanded Formats
+### v2.1 — Safer File Operations\n- **Versioned plans**: New plans store source size, modification time and SHA-256 fingerprints and must match the selected root folder.\n- **No-overwrite execution**: Applying a plan preflights every action and refuses existing destinations, changed sources, symbolic links and paths outside the selected folder.\n- **Safer undo**: Undo refuses to overwrite recreated originals and skips files changed after organization. Keep the log in its original organization root folder.\n- **AI failure handling**: Files are skipped when the model fails or returns incomplete JSON instead of being filed under `Miscellaneous`.\n\n### v2.0 — Universal LLM Support, Plan Caching, Undo, & Expanded Formats
 - **Universal LLM Provider Layer**: No longer locked to LM Studio + Mistral-7B. Connect **LM Studio**, **Ollama**, **llama.cpp**, **OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**, or any custom OpenAI-compatible endpoint via `config.yaml` or CLI flags, with automatic local model detection (`model: "auto"`).
 - **Cached Dry-Run Plans & One-Click Undo**: Dry-run results are now cached so live mode applies the exact approved changes without calling the LLM twice. Added `--save-plan`, `--apply-plan`, and `--undo <log.json>` to safely reverse any batch.
 - **Expanded Format & Image Support**: Added built-in extractors for `.rtf`, `.odt`, and `.pptx`, migrated PDF parsing from deprecated `PyPDF2` to `pypdf` (with `None`-safe handling for scanned PDFs), and added optional image organization (`--include-images`) via Vision-Language Models (VLMs) or `pytesseract` OCR.
@@ -46,9 +46,9 @@ Automatically rename and organize your documents (and optionally images) using A
 - **Bring Your Own Model**: Switch to any local model (`auto`-detected) or cloud API (**OpenAI**, **OpenRouter**, **Anthropic**, **Gemini**) in `config.yaml` or via CLI flags
 
 ### 🛡️ Safety Features
-- **Exact Dry-Run Plan Caching**: Live mode executes the exact plan you reviewed—zero drift
+- **Exact Dry-Run Plan Caching**: Live mode executes the exact plan you reviewed, after validating the source files
 - **Save & Replay Plans**: Export a dry-run plan with `--save-plan plan.json` and apply later with `--apply-plan plan.json`
-- **One-Click Undo**: Reverse any run with `python file_organizer.py --undo <organization_log.json>`
+- **One-Click Undo**: Reverse a run with `python file_organizer.py --undo <organization_log.json>`; existing files and post-run modifications are protected
 - **Non-Destructive**: Original files are moved/renamed, never deleted
 
 ---
